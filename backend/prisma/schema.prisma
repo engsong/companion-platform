@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String            @id @default(uuid())
+  phone         String            @unique
+  email         String?           @unique
+  passwordHash  String
+  role          String            @default("CLIENT") // CLIENT, COMPANION, ADMIN
+  name          String
+  avatar        String?
+  bio           String?
+  gender        String?
+  city          String            @default("Vientiane")
+  isVerified    Boolean           @default(false)
+  isBanned      Boolean           @default(false)
+  walletBalance Float             @default(0.0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  companion     CompanionProfile?
+  posts         Post[]
+  postLikes     PostLike[]
+  postComments  PostComment[]
+  
+  clientBookings    Booking[]     @relation("ClientBookings")
+  companionBookings Booking[]     @relation("CompanionBookings")
+
+  sentMessages     ChatMessage[]  @relation("SentMessages")
+  receivedMessages ChatMessage[]  @relation("ReceivedMessages")
+}
+
+model CompanionProfile {
+  id              String      @id @default(uuid())
+  userId          String      @unique
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hourlyRate      Float       @default(200000) // in LAK
+  eventRate       Float       @default(1000000) // in LAK
+  services        String      @default("DRINK,PARTY,DINNER") // comma separated
+  height          Int?
+  languages       String      @default("Lao, Thai, English")
+  kycStatus       String      @default("NOT_SUBMITTED") // NOT_SUBMITTED, PENDING, APPROVED, REJECTED
+  kycIdCardUrl    String?
+  kycSelfieUrl    String?
+  kycNote         String?
+  rating          Float       @default(5.0)
+  reviewCount     Int         @default(0)
+  isAvailable     Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model Post {
+  id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  caption     String?
+  mediaUrl    String
+  mediaType   String        @default("IMAGE") // IMAGE, VIDEO
+  likesCount  Int           @default(0)
+  isApproved  Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  likes       PostLike[]
+  comments    PostComment[]
+}
+
+model PostLike {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+}
+
+model PostComment {
+  id        String   @id @default(uuid())
+  postId    String
+  userId    String
+  content   String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model Booking {
+  id                 String         @id @default(uuid())
+  refCode            String         @unique
+  clientId           String
+  client             User           @relation("ClientBookings", fields: [clientId], references: [id])
+  companionId        String
+  companion          User           @relation("CompanionBookings", fields: [companionId], references: [id])
+  
+  status             String         @default("OFFER_SENT") // OFFER_SENT, OFFER_ACCEPTED, PENDING_PAYMENT_VERIFICATION, CONFIRMED_ESCROW, CHECKED_IN, COMPLETED, CANCELLED, DISPUTED
+  activityType       String         @default("DRINK") // DRINK, PARTY, DINNER, EVENT
+  venueName          String
+  venueAddress       String?
+  eventDate          String         // YYYY-MM-DD
+  startTime          String         // HH:mm
+  durationHours      Int            @default(3)
+  
+  totalAmount        Float
+  platformFee        Float          @default(0.0)
+  companionPayout    Float          @default(0.0)
+
+  clientCheckInAt    DateTime?
+  companionCheckInAt DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
+
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  paymentSlip        PaymentSlip?
+  chatMessages       ChatMessage[]
+}
+
+model PaymentSlip {
+  id             String    @id @default(uuid())
+  bookingId      String    @unique
+  booking        Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  slipUrl        String
+  amount         Float
+  bankRef        String?
+  status         String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  adminNote      String?
+  reviewedAt     DateTime?
+  reviewedBy     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model ChatMessage {
+  id            String    @id @default(uuid())
+  senderId      String
+  receiverId    String
+  sender        User      @relation("SentMessages", fields: [senderId], references: [id])
+  receiver      User      @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  bookingId     String?
+  booking       Booking?  @relation(fields: [bookingId], references: [id])
+  
+  content       String
+  messageType   String    @default("TEXT") // TEXT, IMAGE, OFFER_CARD, SYSTEM_ALERT
+  isBlocked     Boolean   @default(false)
+  blockedReason String?
+  isRead        Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}

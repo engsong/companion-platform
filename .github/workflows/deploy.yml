@@ -1,0 +1,54 @@
+name: Auto Deploy to Ubuntu Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST || '150.95.30.215' }}
+          username: ${{ secrets.SERVER_USER || 'root' }}
+          password: ${{ secrets.SERVER_PASSWORD || 'Changeme1!2@' }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            echo "🚀 Starting automated deployment on 150.95.30.215..."
+            
+            DEPLOY_DIR="/opt/companion-platform"
+            
+            # Ensure deployment directory exists
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              echo "Cloning repository for the first time..."
+              git clone https://github.com/${{ github.repository }}.git "$DEPLOY_DIR"
+            fi
+            
+            cd "$DEPLOY_DIR"
+            
+            echo "Pulling latest changes from main branch..."
+            git fetch --all
+            git reset --hard origin/main
+            
+            echo "Building and launching Docker containers..."
+            docker compose down || true
+            docker compose build --pull
+            docker compose up -d
+            
+            echo "Applying Prisma database migrations to PostgreSQL..."
+            docker compose exec -T backend npx prisma db push
+            
+            echo "Checking deployment health..."
+            sleep 5
+            docker ps --filter "name=companion"
+            curl -f http://localhost:5000/api/health || echo "Backend starting up..."
+            
+            echo "✅ Deployment completed successfully!"
