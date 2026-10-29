@@ -375,6 +375,7 @@ export default function App() {
           <div className="flex items-center gap-1.5 text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>Role: <strong className="text-rose-400">{currentUser?.role || 'CLIENT'}</strong></span>
+            <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 font-mono text-[9px] rounded border border-emerald-500/30">v1.0.1 Live</span>
           </div>
           <div className="flex items-center gap-1">
             <span className="text-slate-500 mr-1">Switch:</span>
