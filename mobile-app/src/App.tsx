@@ -21,7 +21,8 @@ import {
   QrCode,
   DollarSign,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  LogOut
 } from 'lucide-react';
 import { User, CompanionCard, PostItem, Booking, ChatMsg } from './types';
 
@@ -74,6 +75,17 @@ export default function App() {
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
   const [kycSuccess, setKycSuccess] = useState('');
 
+  // Auth Screen states (Login & Register)
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authPhone, setAuthPhone] = useState('02088888888');
+  const [authPassword, setAuthPassword] = useState('pass123');
+  const [authName, setAuthName] = useState('');
+  const [authRole, setAuthRole] = useState<'CLIENT' | 'COMPANION'>('CLIENT');
+  const [authGender, setAuthGender] = useState('Female');
+  const [authCity, setAuthCity] = useState('Vientiane');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+
   // Switch Account fast selector
   const switchAccount = async (targetPhone: string, pass: string) => {
     try {
@@ -94,6 +106,64 @@ export default function App() {
     }
   };
 
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: authPhone, password: authPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      localStorage.setItem('mobile_token', data.token);
+      setToken(data.token);
+      setCurrentUser(data.user);
+    } catch (err: any) {
+      setAuthError(err.message || 'Login error');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: authPhone,
+          password: authPassword,
+          name: authName,
+          role: authRole,
+          gender: authGender,
+          city: authCity,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Registration failed');
+      localStorage.setItem('mobile_token', data.token);
+      setToken(data.token);
+      setCurrentUser(data.user);
+    } catch (err: any) {
+      setAuthError(err.message || 'Registration error');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('mobile_token');
+    setToken('');
+    setCurrentUser(null);
+    setActiveChatUser(null);
+  };
+
   // Auth fetch helper
   const authFetch = async (url: string, opts: RequestInit = {}) => {
     const headers = {
@@ -110,11 +180,15 @@ export default function App() {
       authFetch('/api/auth/me')
         .then((data) => {
           if (data.user) setCurrentUser(data.user);
+          else {
+            setToken('');
+            setCurrentUser(null);
+          }
         })
-        .catch(() => setToken(''));
-    } else {
-      // Default auto-login as Somphone (Client) for instant demo
-      switchAccount('02088888888', 'pass123');
+        .catch(() => {
+          setToken('');
+          setCurrentUser(null);
+        });
     }
   }, [token]);
 
@@ -365,6 +439,204 @@ export default function App() {
       console.error(err);
     }
   };
+
+  // If not logged in, render Mobile Login & Register Screen
+  if (!token || !currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex justify-center p-0 selection:bg-rose-500 selection:text-white">
+        <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 flex flex-col min-h-screen shadow-2xl relative overflow-y-auto p-6 justify-center">
+          <div className="text-center mb-6">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center text-white mx-auto shadow-lg shadow-rose-600/30 mb-3">
+              <Sparkles className="w-7 h-7" />
+            </div>
+            <h1 className="text-xl font-bold text-white tracking-tight">Companion Social App</h1>
+            <p className="text-xs text-slate-400 mt-1">Dating & Party Companion Platform</p>
+          </div>
+
+          {/* Mode Switcher */}
+          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 mb-5">
+            <button
+              onClick={() => { setAuthMode('login'); setAuthError(''); }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+                authMode === 'login' ? 'bg-rose-500 text-white shadow-md' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Log In
+            </button>
+            <button
+              onClick={() => { setAuthMode('register'); setAuthError(''); }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+                authMode === 'register' ? 'bg-rose-500 text-white shadow-md' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {authError && (
+            <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{authError}</span>
+            </div>
+          )}
+
+          {authMode === 'login' ? (
+            <form onSubmit={handleLoginSubmit} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Phone Number</label>
+                <input
+                  type="text"
+                  value={authPhone}
+                  onChange={(e) => setAuthPhone(e.target.value)}
+                  placeholder="020xxxxxxxx"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Password</label>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-2.5 bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-rose-600/25 transition-all mt-2"
+              >
+                {authLoading ? 'Signing In...' : 'Log In to App'}
+              </button>
+
+              {/* Demo Accounts Quick Login */}
+              <div className="pt-4 border-t border-slate-800 text-center">
+                <p className="text-[11px] text-slate-400 mb-2 font-medium">Quick Demo One-Click Login:</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => switchAccount('02088888888', 'pass123')}
+                    className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl text-left transition-colors"
+                  >
+                    <p className="text-xs font-bold text-white">Somphone</p>
+                    <p className="text-[10px] text-rose-400">Client Role</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchAccount('02077777777', 'pass123')}
+                    className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-xl text-left transition-colors"
+                  >
+                    <p className="text-xs font-bold text-white">Mina Keomany</p>
+                    <p className="text-[10px] text-amber-400">Companion Role</p>
+                  </button>
+                </div>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleRegisterSubmit} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">I want to register as:</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAuthRole('CLIENT')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                      authRole === 'CLIENT'
+                        ? 'bg-rose-500/20 border-rose-500 text-rose-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    Client (Booker)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthRole('COMPANION')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                      authRole === 'COMPANION'
+                        ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    Companion (Talent)
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Full Name</label>
+                <input
+                  type="text"
+                  value={authName}
+                  onChange={(e) => setAuthName(e.target.value)}
+                  placeholder="e.g. Alouny"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Phone Number</label>
+                <input
+                  type="text"
+                  value={authPhone}
+                  onChange={(e) => setAuthPhone(e.target.value)}
+                  placeholder="020xxxxxxxx"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Password</label>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Gender</label>
+                  <select
+                    value={authGender}
+                    onChange={(e) => setAuthGender(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  >
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                    <option value="Non-binary">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">City</label>
+                  <select
+                    value={authCity}
+                    onChange={(e) => setAuthCity(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+                  >
+                    <option value="Vientiane">Vientiane</option>
+                    <option value="Luang Prabang">Luang Prabang</option>
+                    <option value="Pakse">Pakse</option>
+                    <option value="Savannakhet">Savannakhet</option>
+                  </select>
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-2.5 bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-rose-600/25 transition-all mt-3"
+              >
+                {authLoading ? 'Creating Account...' : 'Complete Registration'}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 flex justify-center selection:bg-rose-500 selection:text-white">
@@ -956,6 +1228,15 @@ export default function App() {
                   <li>Attempting to exchange bank details outside will lead to account suspension.</li>
                 </ul>
               </div>
+
+              {/* Log out Button */}
+              <button
+                onClick={handleLogout}
+                className="w-full py-3 bg-slate-950 hover:bg-slate-800 text-rose-400 rounded-xl text-xs font-bold border border-rose-500/30 flex items-center justify-center gap-2 transition-colors shadow-lg"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Log Out of Account</span>
+              </button>
             </div>
           )}
         </div>
