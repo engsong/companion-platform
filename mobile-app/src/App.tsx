@@ -37,10 +37,12 @@ import {
   Download,
   ScanLine,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  Search,
+  Info
 } from 'lucide-react';
 import jsQR from 'jsqr';
-import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip } from './types';
+import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip, ChatContact, UserProfileData } from './types';
 
 export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem('mobile_token') || '');
@@ -81,6 +83,19 @@ export default function App() {
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<any>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // Online status & Chat Contacts
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
+  const [chatContacts, setChatContacts] = useState<ChatContact[]>([]);
+  const [contactSearch, setContactSearch] = useState('');
+  const [contactFilter, setContactFilter] = useState<'ALL' | 'ONLINE' | 'COMPANION' | 'CLIENT'>('ALL');
+
+  // Facebook-style Profile modal & Photo Lightbox
+  const [selectedUserProfile, setSelectedUserProfile] = useState<UserProfileData | null>(null);
+  const [loadingUserProfile, setLoadingUserProfile] = useState(false);
+  const [photoViewerUrl, setPhotoViewerUrl] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
 
   // In-App Wallet states & modals
   const [walletTransactions, setWalletTransactions] = useState<WalletTx[]>([]);
@@ -388,17 +403,93 @@ export default function App() {
       }
     });
 
+    // Real-time online users updates
+    socket.on('online_users_update', (ids: string[]) => {
+      setOnlineUserIds(ids);
+      setChatContacts((prev) => prev.map((c) => ({ ...c, isOnline: ids.includes(c.id) })));
+      setSelectedUserProfile((prev) => (prev ? { ...prev, isOnline: ids.includes(prev.id) } : null));
+    });
+
     return () => {
       socket.disconnect();
     };
   }, [currentUser]);
 
-  // Load conversation list
+  // Load chat contacts (all friends/companions/clients)
+  const loadChatContacts = async () => {
+    if (!token) return;
+    try {
+      const data = await authFetch('/api/chat/contacts');
+      if (data.contacts) setChatContacts(data.contacts);
+      if (data.onlineUserIds) setOnlineUserIds(data.onlineUserIds);
+    } catch (e) {
+      console.error('Failed to load chat contacts:', e);
+    }
+  };
+
+  // Open any user's Facebook-style profile modal
+  const handleOpenUserProfile = async (userId: string) => {
+    setLoadingUserProfile(true);
+    try {
+      const res = await authFetch(`/api/auth/profile/${userId}`);
+      if (res.profile) {
+        setSelectedUserProfile(res.profile);
+      } else {
+        showToast('Unable to load user profile.', 'error');
+      }
+    } catch (e) {
+      console.error('Failed to load user profile:', e);
+      showToast('Error loading profile.', 'error');
+    } finally {
+      setLoadingUserProfile(false);
+    }
+  };
+
+  // Start chat with user from Online Bar, Contacts directory, or Profile modal
+  const handleStartChatWithUser = (user: { id: string; name: string; avatar: string | null }) => {
+    setSelectedUserProfile(null);
+    setActiveChatUser({ id: user.id, name: user.name, avatar: user.avatar });
+    setActiveTab('chat');
+  };
+
+  // Upload & update user profile picture
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const formData = new FormData();
+      formData.append('avatar', file);
+      const res = await fetch('/api/auth/profile', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok && data.user) {
+        setCurrentUser(data.user);
+        setSelectedUserProfile((prev) => (prev && prev.id === data.user.id ? { ...prev, avatar: data.user.avatar } : prev));
+        showToast('Profile picture updated successfully! (ປ່ຽນຮູບໂປຣໄຟລ໌ສຳເລັດແລ້ວ)', 'success');
+      } else {
+        showToast(data.error || 'Failed to update profile picture', 'error');
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast('Failed to upload profile picture', 'error');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  // Load conversation list and contacts
   useEffect(() => {
     if (activeTab === 'chat' && token) {
       authFetch('/api/chat/conversations').then((data) => {
         if (data.conversations) setConversations(data.conversations);
       });
+      loadChatContacts();
     }
   }, [activeTab, token]);
 
@@ -1652,25 +1743,43 @@ export default function App() {
               <div className="divide-y divide-slate-800">
                 {posts.map((post) => (
                   <div key={post.id} className="p-4 space-y-3">
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={post.user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
-                        alt={post.user.name}
-                        className="w-10 h-10 rounded-full object-cover border border-slate-700"
-                      />
+                    <div
+                      onClick={() => handleOpenUserProfile(post.user.id)}
+                      className="flex items-center gap-3 cursor-pointer group"
+                    >
+                      <div className="relative shrink-0">
+                        <img
+                          src={post.user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                          alt={post.user.name}
+                          className="w-10 h-10 rounded-full object-cover border border-slate-700 group-hover:ring-2 group-hover:ring-rose-500 transition-all"
+                        />
+                        {onlineUserIds.includes(post.user.id) && (
+                          <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-400 border-2 border-slate-900 rounded-full" />
+                        )}
+                      </div>
                       <div>
-                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <h4 className="text-xs font-bold text-white group-hover:text-rose-400 transition-colors flex items-center gap-1.5">
                           {post.user.name}
                           {post.user.isVerified && <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />}
                         </h4>
-                        <p className="text-[10px] text-slate-500">{post.user.city} • {new Date(post.createdAt).toLocaleDateString()}</p>
+                        <p className="text-[10px] text-slate-500">
+                          {post.user.city} • {new Date(post.createdAt).toLocaleDateString()} • <span className="text-rose-400/90 font-semibold group-hover:underline">View Profile</span>
+                        </p>
                       </div>
                     </div>
 
                     {post.caption && <p className="text-xs text-slate-200">{post.caption}</p>}
 
-                    <div className="rounded-2xl overflow-hidden border border-slate-800 bg-black max-h-96">
-                      <img src={post.mediaUrl} alt="Post media" className="w-full object-cover" />
+                    <div
+                      onClick={() => setPhotoViewerUrl(post.mediaUrl)}
+                      className="rounded-2xl overflow-hidden border border-slate-800 bg-black max-h-96 cursor-pointer group relative"
+                    >
+                      <img src={post.mediaUrl} alt="Post media" className="w-full object-cover group-hover:opacity-95 transition-opacity" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                        <span className="px-2.5 py-1 rounded-full bg-black/70 text-white text-[10px] font-semibold backdrop-blur">
+                          Click to view photo
+                        </span>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-4 text-xs text-slate-400 pt-1">
@@ -1699,53 +1808,267 @@ export default function App() {
           {activeTab === 'chat' && (
             <div className="h-full flex flex-col">
               {!activeChatUser ? (
-                <div>
-                  <div className="p-4 border-b border-slate-800">
-                    <h2 className="text-lg font-bold text-white">Messages</h2>
-                    <p className="text-xs text-slate-400">Direct chat with verified companions & clients</p>
+                <div className="h-[calc(100vh-140px)] overflow-y-auto no-scrollbar divide-y divide-slate-800/60">
+                  {/* Header */}
+                  <div className="p-4 bg-slate-900/40 border-b border-slate-800 flex justify-between items-center sticky top-0 backdrop-blur z-10">
+                    <div>
+                      <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        <MessageCircle className="w-5 h-5 text-rose-500" />
+                        Messages
+                      </h2>
+                      <p className="text-xs text-slate-400">Direct chat with verified companions & clients</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>{onlineUserIds.length} Online</span>
+                    </div>
                   </div>
 
-                  <div className="divide-y divide-slate-800/60">
-                    {conversations.length === 0 ? (
-                      <div className="p-12 text-center text-slate-500 text-xs">
-                        No conversations yet. Go to <strong className="text-rose-400">Explore</strong> to start chatting!
+                  {/* 1. HORIZONTAL ONLINE FRIENDS / ACTIVE NOW STORY BAR */}
+                  <div className="p-3.5 bg-slate-950/40">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        Active Now ({chatContacts.filter((c) => c.isOnline).length})
+                      </span>
+                      <span className="text-[10px] text-slate-500">Tap to chat</span>
+                    </div>
+                    <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1">
+                      {chatContacts.filter((c) => c.isOnline).length === 0 ? (
+                        <div className="p-2.5 text-[11px] text-slate-500 italic bg-slate-900/30 rounded-xl w-full text-center">
+                          No other users online right now. They will appear here when active!
+                        </div>
+                      ) : (
+                        chatContacts.filter((c) => c.isOnline).map((user) => (
+                          <div
+                            key={user.id}
+                            onClick={() => handleStartChatWithUser(user)}
+                            className="flex flex-col items-center gap-1 shrink-0 cursor-pointer group"
+                          >
+                            <div className="relative">
+                              <img
+                                src={user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                                alt={user.name}
+                                className="w-13 h-13 rounded-full object-cover border-2 border-emerald-500 p-0.5 group-hover:scale-105 transition-all shadow-md shadow-emerald-500/20"
+                              />
+                              <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-900 shadow" />
+                            </div>
+                            <span className="text-[10px] text-slate-300 font-semibold max-w-[56px] truncate group-hover:text-rose-400 text-center">
+                              {user.name.split(' ')[0]}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 2. ALL FRIENDS & CLIENTS DIRECTORY */}
+                  <div className="p-4 space-y-3 bg-slate-900/20">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <UserIcon className="w-3.5 h-3.5 text-rose-400" />
+                        All Friends & Contacts (ລາຍຊື່ທັງໝົດ)
+                      </h3>
+                      <span className="text-[10px] text-slate-400">
+                        {chatContacts.length} people
+                      </span>
+                    </div>
+
+                    {/* Search & Filter Tabs */}
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Search friends or clients by name, city..."
+                          value={contactSearch}
+                          onChange={(e) => setContactSearch(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-rose-500"
+                        />
+                        {contactSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setContactSearch('')}
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
-                    ) : (
-                      conversations.map((c) => (
-                        <div
-                          key={c.partner.id}
-                          onClick={() => setActiveChatUser(c.partner)}
-                          className="p-4 flex items-center gap-3 hover:bg-slate-800/40 transition-colors cursor-pointer"
-                        >
-                          <img
-                            src={c.partner.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
-                            alt={c.partner.name}
-                            className="w-12 h-12 rounded-full object-cover border border-slate-700"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-baseline mb-1">
-                              <h4 className="text-xs font-bold text-white truncate flex items-center gap-1">
-                                {c.partner.name}
-                                {c.partner.isVerified && <ShieldCheck className="w-3 h-3 text-emerald-400" />}
-                              </h4>
-                              {c.lastMessage && (
-                                <span className="text-[10px] text-slate-500">
-                                  {new Date(c.lastMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+
+                      <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                        {[
+                          { id: 'ALL', label: `All (${chatContacts.length})` },
+                          { id: 'ONLINE', label: `Online 🟢 (${chatContacts.filter((c) => c.isOnline).length})` },
+                          { id: 'COMPANION', label: 'Companions 🌸' },
+                          { id: 'CLIENT', label: 'Clients 💼' }
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setContactFilter(tab.id as any)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors shrink-0 ${
+                              contactFilter === tab.id
+                                ? 'bg-rose-500 border-rose-500 text-white'
+                                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Contact Cards List */}
+                    <div className="space-y-2 max-h-64 overflow-y-auto no-scrollbar">
+                      {chatContacts
+                        .filter((c) => {
+                          if (contactFilter === 'ONLINE' && !c.isOnline) return false;
+                          if (contactFilter === 'COMPANION' && c.role !== 'COMPANION') return false;
+                          if (contactFilter === 'CLIENT' && c.role !== 'CLIENT') return false;
+                          if (contactSearch.trim()) {
+                            const q = contactSearch.toLowerCase();
+                            return c.name.toLowerCase().includes(q) || (c.city && c.city.toLowerCase().includes(q));
+                          }
+                          return true;
+                        })
+                        .length === 0 ? (
+                        <div className="p-6 text-center text-slate-500 text-xs">
+                          No users found matching your search.
+                        </div>
+                      ) : (
+                        chatContacts
+                          .filter((c) => {
+                            if (contactFilter === 'ONLINE' && !c.isOnline) return false;
+                            if (contactFilter === 'COMPANION' && c.role !== 'COMPANION') return false;
+                            if (contactFilter === 'CLIENT' && c.role !== 'CLIENT') return false;
+                            if (contactSearch.trim()) {
+                              const q = contactSearch.toLowerCase();
+                              return c.name.toLowerCase().includes(q) || (c.city && c.city.toLowerCase().includes(q));
+                            }
+                            return true;
+                          })
+                          .map((contact) => (
+                            <div
+                              key={contact.id}
+                              className="p-2.5 bg-slate-950/80 hover:bg-slate-900 border border-slate-800/80 hover:border-slate-700 rounded-xl flex items-center justify-between gap-2.5 transition-all"
+                            >
+                              <div
+                                onClick={() => handleOpenUserProfile(contact.id)}
+                                className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0"
+                              >
+                                <div className="relative shrink-0">
+                                  <img
+                                    src={contact.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                                    alt={contact.name}
+                                    className="w-10 h-10 rounded-full object-cover border border-slate-800"
+                                  />
+                                  {contact.isOnline ? (
+                                    <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-900" />
+                                  ) : (
+                                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-slate-600 border border-slate-900" />
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <h4 className="text-xs font-bold text-white truncate flex items-center gap-1.5 hover:text-rose-400">
+                                    {contact.name}
+                                    {contact.isVerified && <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                                  </h4>
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                                    <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold ${
+                                      contact.role === 'COMPANION'
+                                        ? 'bg-rose-500/20 text-rose-300'
+                                        : 'bg-blue-500/20 text-blue-300'
+                                    }`}>
+                                      {contact.role}
+                                    </span>
+                                    <span>{contact.city}</span>
+                                    {contact.isOnline && (
+                                      <span className="text-emerald-400 font-bold">Online</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenUserProfile(contact.id)}
+                                  className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white"
+                                  title="View Facebook Profile"
+                                >
+                                  <UserIcon className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartChatWithUser(contact)}
+                                  className="px-3 py-1.5 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-bold text-[11px] flex items-center gap-1 shadow-md shadow-rose-500/20"
+                                >
+                                  <Send className="w-3 h-3" />
+                                  <span>Chat</span>
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 3. RECENT CONVERSATIONS */}
+                  <div className="p-4">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-2">
+                      Recent Conversations (ການສົນທະນາ)
+                    </h3>
+                    <div className="divide-y divide-slate-800/60">
+                      {conversations.length === 0 ? (
+                        <div className="p-6 text-center text-slate-500 text-xs bg-slate-900/30 rounded-xl">
+                          No previous chats yet. Click "Chat" on any friend above to start!
+                        </div>
+                      ) : (
+                        conversations.map((c) => {
+                          const isPartnerOnline = onlineUserIds.includes(c.partner.id);
+                          return (
+                            <div
+                              key={c.partner.id}
+                              onClick={() => setActiveChatUser(c.partner)}
+                              className="py-3 flex items-center gap-3 hover:bg-slate-800/40 transition-colors cursor-pointer"
+                            >
+                              <div className="relative shrink-0">
+                                <img
+                                  src={c.partner.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                                  alt={c.partner.name}
+                                  className="w-12 h-12 rounded-full object-cover border border-slate-700"
+                                />
+                                {isPartnerOnline && (
+                                  <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-emerald-400 border-2 border-slate-900" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex justify-between items-baseline mb-1">
+                                  <h4 className="text-xs font-bold text-white truncate flex items-center gap-1">
+                                    {c.partner.name}
+                                    {c.partner.isVerified && <ShieldCheck className="w-3 h-3 text-emerald-400" />}
+                                  </h4>
+                                  {c.lastMessage && (
+                                    <span className="text-[10px] text-slate-500">
+                                      {new Date(c.lastMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-400 truncate">
+                                  {c.lastMessage?.content || 'Started a conversation'}
+                                </p>
+                              </div>
+                              {c.unreadCount > 0 && (
+                                <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                                  {c.unreadCount}
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-slate-400 truncate">
-                              {c.lastMessage?.content || 'Started a conversation'}
-                            </p>
-                          </div>
-                          {c.unreadCount > 0 && (
-                            <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                              {c.unreadCount}
-                            </span>
-                          )}
-                        </div>
-                      ))
-                    )}
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -1758,18 +2081,52 @@ export default function App() {
                         onClick={() => setActiveChatUser(null)}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-white"
                       >
-                        <X className="w-5 h-5" />
+                        <ChevronRight className="w-5 h-5 rotate-180" />
                       </button>
-                      <img
-                        src={activeChatUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
-                        alt={activeChatUser.name}
-                        className="w-9 h-9 rounded-full object-cover border border-slate-700"
-                      />
-                      <div>
-                        <h4 className="text-xs font-bold text-white">{activeChatUser.name}</h4>
-                        <span className="text-[10px] text-emerald-400">● Online</span>
+                      <div
+                        onClick={() => handleOpenUserProfile(activeChatUser.id)}
+                        className="flex items-center gap-2.5 cursor-pointer group"
+                      >
+                        <div className="relative">
+                          <img
+                            src={activeChatUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
+                            alt={activeChatUser.name}
+                            className="w-9 h-9 rounded-full object-cover border border-slate-700 group-hover:ring-2 group-hover:ring-rose-500 transition-all"
+                          />
+                          {onlineUserIds.includes(activeChatUser.id) ? (
+                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-slate-900" />
+                          ) : (
+                            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-slate-600 border border-slate-900" />
+                          )}
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white group-hover:text-rose-400 transition-colors flex items-center gap-1">
+                            {activeChatUser.name}
+                          </h4>
+                          <span className="text-[10px] flex items-center gap-1 font-semibold">
+                            {onlineUserIds.includes(activeChatUser.id) ? (
+                              <span className="text-emerald-400 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                Online now
+                              </span>
+                            ) : (
+                              <span className="text-slate-500">Offline</span>
+                            )}
+                          </span>
+                        </div>
                       </div>
                     </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenUserProfile(activeChatUser.id)}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1"
+                        title="View Facebook Profile"
+                      >
+                        <UserIcon className="w-3.5 h-3.5" />
+                        <span className="text-[10px] hidden sm:inline">Profile</span>
+                      </button>
 
                     {/* Button to Create Booking Offer directly from chat */}
                     <button
@@ -1780,6 +2137,7 @@ export default function App() {
                       <span>Book Offer</span>
                     </button>
                   </div>
+                </div>
 
                   {/* Anti-Leak Safety Banner */}
                   <div className="px-3 py-1.5 bg-slate-950 border-b border-slate-800/80 text-[10px] text-slate-400 flex items-center gap-1.5 justify-center">
@@ -2283,17 +2641,41 @@ export default function App() {
             <div className="p-4 space-y-5">
               <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-2xl relative overflow-hidden">
                 <div className="flex items-center gap-4">
-                  <img
-                    src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200'}
-                    alt={currentUser.name}
-                    className="w-16 h-16 rounded-full object-cover border-2 border-rose-500 shadow-lg"
-                  />
-                  <div>
-                    <h3 className="text-base font-bold text-white flex items-center gap-1.5">
-                      {currentUser.name}
-                      {currentUser.isVerified && <ShieldCheck className="w-4 h-4 text-emerald-400" />}
-                    </h3>
-                    <p className="text-xs text-slate-400">{currentUser.phone}</p>
+                  <div className="relative group shrink-0">
+                    <img
+                      src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200'}
+                      alt={currentUser.name}
+                      onClick={() => setPhotoViewerUrl(currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400')}
+                      className="w-16 h-16 rounded-full object-cover border-2 border-rose-500 shadow-lg cursor-pointer hover:opacity-90 transition-opacity"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => profileAvatarInputRef.current?.click()}
+                      disabled={uploadingAvatar}
+                      className="absolute -bottom-1 -right-1 p-1.5 bg-rose-500 hover:bg-rose-600 rounded-full text-white shadow border border-slate-900 cursor-pointer"
+                      title="Change Profile Picture"
+                    >
+                      <Camera className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-start gap-1">
+                      <div>
+                        <h3 className="text-base font-bold text-white flex items-center gap-1.5">
+                          {currentUser.name}
+                          {currentUser.isVerified && <ShieldCheck className="w-4 h-4 text-emerald-400" />}
+                        </h3>
+                        <p className="text-xs text-slate-400">{currentUser.phone}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenUserProfile(currentUser.id)}
+                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[10px] font-bold border border-slate-700 flex items-center gap-1 shrink-0"
+                      >
+                        <UserIcon className="w-3 h-3 text-rose-400" />
+                        <span>Facebook Profile</span>
+                      </button>
+                    </div>
                     <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold">
                       Role: {currentUser.role}
                     </span>
@@ -2531,6 +2913,302 @@ export default function App() {
             <span className="text-[10px]">Profile</span>
           </button>
         </div>
+
+        {/* HIDDEN FILE INPUT FOR CHANGING PROFILE AVATAR */}
+        <input
+          type="file"
+          ref={profileAvatarInputRef}
+          accept="image/*"
+          className="hidden"
+          onChange={handleAvatarChange}
+        />
+
+        {/* FULL SCREEN PHOTO VIEWER / LIGHTBOX */}
+        {photoViewerUrl && (
+          <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in">
+            {/* Top Bar */}
+            <div className="absolute top-4 right-4 flex items-center gap-2.5 z-20">
+              {currentUser?.avatar === photoViewerUrl && (
+                <button
+                  type="button"
+                  onClick={() => profileAvatarInputRef.current?.click()}
+                  disabled={uploadingAvatar}
+                  className="px-3.5 py-1.5 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/30"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{uploadingAvatar ? 'Uploading...' : 'Change Photo'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setPhotoViewerUrl(null)}
+                className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Photo */}
+            <div
+              onClick={() => setPhotoViewerUrl(null)}
+              className="w-full h-full flex items-center justify-center cursor-zoom-out p-2"
+            >
+              <img
+                src={photoViewerUrl}
+                alt="Full preview"
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-[82vh] max-w-full object-contain rounded-2xl shadow-2xl cursor-default"
+              />
+            </div>
+
+            <div className="text-center pb-2">
+              <span className="text-[11px] text-slate-400">Tap outside or press (X) to exit</span>
+            </div>
+          </div>
+        )}
+
+        {/* FACEBOOK-STYLE USER PROFILE MODAL */}
+        {selectedUserProfile && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+            <div className="bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto no-scrollbar shadow-2xl relative">
+              
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setSelectedUserProfile(null)}
+                className="absolute top-3 right-3 z-30 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur transition-colors"
+                title="Close Profile"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* 1. Facebook Cover Banner */}
+              <div className="h-36 sm:h-44 w-full bg-gradient-to-r from-rose-900 via-purple-900 to-indigo-950 relative overflow-hidden">
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/10 to-transparent" />
+                <div className="absolute bottom-2 right-3 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur text-[10px] text-white/80 font-medium">
+                  Companion Social Network
+                </div>
+              </div>
+
+              {/* 2. Avatar Overlapping Cover */}
+              <div className="px-5 pb-5 -mt-16 sm:-mt-20 relative">
+                <div className="flex justify-between items-end">
+                  <div className="relative group">
+                    <img
+                      src={selectedUserProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300'}
+                      alt={selectedUserProfile.name}
+                      onClick={() => setPhotoViewerUrl(selectedUserProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600')}
+                      className="w-24 h-24 sm:w-28 sm:h-28 rounded-full object-cover border-4 border-slate-900 shadow-2xl cursor-pointer hover:opacity-90 transition-opacity"
+                    />
+                    {/* Online status indicator */}
+                    {onlineUserIds.includes(selectedUserProfile.id) && (
+                      <span className="absolute bottom-1 right-1 w-5 h-5 rounded-full bg-emerald-400 border-3 border-slate-900 shadow" title="Online" />
+                    )}
+
+                    {/* Change Profile Pic Button if own profile */}
+                    {currentUser?.id === selectedUserProfile.id && (
+                      <button
+                        type="button"
+                        onClick={() => profileAvatarInputRef.current?.click()}
+                        disabled={uploadingAvatar}
+                        className="absolute bottom-1 right-1 p-2 rounded-full bg-rose-500 hover:bg-rose-600 text-white border-2 border-slate-900 shadow-lg cursor-pointer"
+                        title="Change Profile Picture (ປ່ຽນຮູບໂປຣໄຟລ໌)"
+                      >
+                        <Camera className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Action Buttons in Header */}
+                  <div className="flex items-center gap-2 mb-1">
+                    {currentUser?.id !== selectedUserProfile.id ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleStartChatWithUser(selectedUserProfile)}
+                          className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/25 transition-all"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>Message</span>
+                        </button>
+                        {selectedUserProfile.role === 'COMPANION' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedUserProfile(null);
+                              const found = companions.find((c) => c.userId === selectedUserProfile.id);
+                              if (found) setSelectedCompanion(found);
+                            }}
+                            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1 border border-slate-700"
+                          >
+                            <Calendar className="w-3.5 h-3.5 text-rose-400" />
+                            <span>Book Date</span>
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => profileAvatarInputRef.current?.click()}
+                        disabled={uploadingAvatar}
+                        className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/25 transition-all"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>{uploadingAvatar ? 'Uploading...' : 'Change Profile Pic (ປ່ຽນຮູບ)'}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Name, Bio & Badges */}
+                <div className="mt-3 space-y-1">
+                  <h3 className="text-xl font-extrabold text-white flex items-center gap-2">
+                    {selectedUserProfile.name}
+                    {selectedUserProfile.isVerified && <ShieldCheck className="w-5 h-5 text-emerald-400" />}
+                  </h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      selectedUserProfile.role === 'COMPANION'
+                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                    }`}>
+                      {selectedUserProfile.role === 'COMPANION' ? 'Verified Companion 🌸' : 'Platform Client 💼'}
+                    </span>
+                    <span className="text-xs text-slate-400 flex items-center gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                      {selectedUserProfile.city || 'Vientiane, Laos'}
+                    </span>
+                    {onlineUserIds.includes(selectedUserProfile.id) && (
+                      <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        Online Now
+                      </span>
+                    )}
+                  </div>
+                  {selectedUserProfile.bio && (
+                    <p className="text-xs text-slate-300 pt-1 leading-relaxed">
+                      {selectedUserProfile.bio}
+                    </p>
+                  )}
+                </div>
+
+                {/* Info Cards (About / Facebook style details) */}
+                <div className="mt-4 p-3.5 bg-slate-950 border border-slate-800 rounded-2xl grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase font-semibold block">Wallet ID</span>
+                    <span className="font-mono text-[11px] text-amber-400 font-bold break-all">
+                      {selectedUserProfile.walletId || 'N/A'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 uppercase font-semibold block">Member Since</span>
+                    <span className="text-slate-300 text-[11px] font-semibold">
+                      {new Date(selectedUserProfile.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  {selectedUserProfile.companion && (
+                    <>
+                      <div>
+                        <span className="text-[10px] text-slate-500 uppercase font-semibold block">Hourly Rate</span>
+                        <span className="text-rose-400 text-xs font-bold">
+                          {selectedUserProfile.companion.hourlyRate.toLocaleString()} LAK/h
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 uppercase font-semibold block">Rating</span>
+                        <span className="text-amber-400 text-xs font-bold flex items-center gap-1">
+                          <Star className="w-3.5 h-3.5 fill-amber-400" />
+                          {selectedUserProfile.companion.rating.toFixed(1)} ({selectedUserProfile.companion.reviewCount} reviews)
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* 3. Facebook Timeline Posts Section */}
+                <div className="mt-5 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <ImageIcon className="w-4 h-4 text-rose-400" />
+                      Posts & Media ({selectedUserProfile.posts?.length || 0})
+                    </h4>
+                    <span className="text-[10px] text-slate-500">Timeline (ໂພສ)</span>
+                  </div>
+
+                  {(!selectedUserProfile.posts || selectedUserProfile.posts.length === 0) ? (
+                    <div className="p-8 text-center text-slate-500 text-xs bg-slate-950/60 border border-slate-800/60 rounded-2xl">
+                      No posts shared by this user yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {selectedUserProfile.posts.map((p) => (
+                        <div key={p.id} className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-3 shadow-lg">
+                          {/* Post Author Header */}
+                          <div className="flex items-center gap-2.5">
+                            <img
+                              src={selectedUserProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                              alt={selectedUserProfile.name}
+                              className="w-9 h-9 rounded-full object-cover border border-slate-800"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-white block">{selectedUserProfile.name}</span>
+                              <span className="text-[10px] text-slate-500">
+                                {new Date(p.createdAt).toLocaleDateString()} • {new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Caption */}
+                          {p.caption && (
+                            <p className="text-xs text-slate-200 leading-relaxed">{p.caption}</p>
+                          )}
+
+                          {/* Media Image */}
+                          {p.mediaUrl && (
+                            <div
+                              onClick={() => setPhotoViewerUrl(p.mediaUrl)}
+                              className="rounded-xl overflow-hidden bg-black max-h-80 cursor-pointer group relative"
+                            >
+                              <img
+                                src={p.mediaUrl}
+                                alt="Post media"
+                                className="w-full object-cover group-hover:opacity-95 transition-opacity"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                <span className="px-2.5 py-1 rounded-full bg-black/70 text-white text-[10px] font-semibold backdrop-blur">
+                                  Click to view full photo
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Post Footer */}
+                          <div className="flex items-center justify-between text-xs text-slate-400 pt-1 border-t border-slate-900">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await authFetch(`/api/posts/${p.id}/like`, { method: 'POST' });
+                                handleOpenUserProfile(selectedUserProfile.id);
+                              }}
+                              className="flex items-center gap-1.5 hover:text-rose-400 transition-colors"
+                            >
+                              <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
+                              <span>{p.likesCount}</span>
+                            </button>
+                            <span className="text-[10px] text-slate-500">
+                              {p.comments?.length || 0} comments
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* MODAL 1: COMPANION PROFILE DETAIL */}
         {selectedCompanion && (

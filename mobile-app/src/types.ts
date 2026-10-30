@@ -144,3 +144,53 @@ export interface WalletTransferEslip {
   };
 }
 
+export interface ChatContact {
+  id: string;
+  name: string;
+  avatar: string | null;
+  role: string;
+  city: string;
+  gender?: string | null;
+  bio?: string | null;
+  isVerified: boolean;
+  isOnline: boolean;
+  createdAt: string;
+  companion?: {
+    hourlyRate: number;
+    rating: number;
+    services: string;
+    isAvailable: boolean;
+  } | null;
+}
+
+export interface UserProfileData {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  role: string;
+  avatar: string | null;
+  bio?: string | null;
+  gender?: string | null;
+  city: string;
+  isVerified: boolean;
+  walletId?: string | null;
+  isOnline?: boolean;
+  createdAt: string;
+  companion?: {
+    id: string;
+    hourlyRate: number;
+    eventRate: number;
+    services: string;
+    rating: number;
+    reviewCount: number;
+    isAvailable: boolean;
+  } | null;
+  posts: PostItem[];
+  stats?: {
+    totalPosts: number;
+    totalLikes: number;
+  };
+}
+
+

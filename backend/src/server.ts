@@ -55,14 +55,36 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/wallet', walletRoutes);
 
+// Online users tracking
+const onlineUserSockets = new Map<string, Set<string>>();
+const socketToUser = new Map<string, string>();
+
+function getOnlineUserIds(): string[] {
+  return Array.from(onlineUserSockets.keys());
+}
+app.set('getOnlineUserIds', getOnlineUserIds);
+
 // Realtime WebSocket Chat
 io.on('connection', (socket) => {
   console.log(`[Socket.io] Client connected: ${socket.id}`);
 
+  // Immediately send current online users list to new client
+  socket.emit('online_users_update', getOnlineUserIds());
+
   // User joins their personal room to receive private messages and alerts
   socket.on('join_user', (userId: string) => {
     socket.join(`user_${userId}`);
-    console.log(`[Socket.io] User joined room: user_${userId}`);
+    socketToUser.set(socket.id, userId);
+    if (!onlineUserSockets.has(userId)) {
+      onlineUserSockets.set(userId, new Set());
+    }
+    onlineUserSockets.get(userId)!.add(socket.id);
+    console.log(`[Socket.io] User online: ${userId} (active connections: ${onlineUserSockets.get(userId)!.size})`);
+    io.emit('online_users_update', getOnlineUserIds());
+  });
+
+  socket.on('get_online_users', () => {
+    socket.emit('online_users_update', getOnlineUserIds());
   });
 
   // User joins a booking room
@@ -125,6 +147,18 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log(`[Socket.io] Client disconnected: ${socket.id}`);
+    const userId = socketToUser.get(socket.id);
+    if (userId) {
+      socketToUser.delete(socket.id);
+      const userSockets = onlineUserSockets.get(userId);
+      if (userSockets) {
+        userSockets.delete(socket.id);
+        if (userSockets.size === 0) {
+          onlineUserSockets.delete(userId);
+        }
+      }
+      io.emit('online_users_update', getOnlineUserIds());
+    }
   });
 });
 

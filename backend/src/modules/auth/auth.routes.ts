@@ -250,4 +250,74 @@ router.patch('/profile', authenticateToken, uploadAvatar.single('avatar'), async
   }
 });
 
+// Get user profile detail (any user, Facebook style with timeline posts)
+router.get('/profile/:userId', async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        bio: true,
+        gender: true,
+        city: true,
+        role: true,
+        isVerified: true,
+        walletId: true,
+        createdAt: true,
+        companion: true,
+        posts: {
+          where: { isApproved: true },
+          orderBy: { createdAt: 'desc' },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true,
+                city: true,
+                isVerified: true,
+                role: true
+              }
+            },
+            likes: { select: { userId: true } },
+            comments: {
+              include: {
+                user: { select: { id: true, name: true, avatar: true } }
+              },
+              orderBy: { createdAt: 'desc' }
+            }
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User profile not found' });
+    }
+
+    const getOnlineUserIds: (() => string[]) | undefined = req.app.get('getOnlineUserIds');
+    const onlineIds = new Set(getOnlineUserIds ? getOnlineUserIds() : []);
+    const isOnline = onlineIds.has(user.id);
+
+    const totalLikes = user.posts.reduce((acc, p) => acc + p.likesCount, 0);
+
+    res.json({
+      profile: {
+        ...user,
+        isOnline,
+        stats: {
+          totalPosts: user.posts.length,
+          totalLikes
+        }
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch user profile' });
+  }
+});
+
 export default router;

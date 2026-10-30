@@ -208,4 +208,58 @@ router.post('/upload', authenticateToken, uploadChatMedia.single('file'), async 
   }
 });
 
+// Get contacts list (all clients & companions with online status)
+router.get('/contacts', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const getOnlineUserIds: (() => string[]) | undefined = req.app.get('getOnlineUserIds');
+    const onlineIds = new Set(getOnlineUserIds ? getOnlineUserIds() : []);
+
+    const users = await prisma.user.findMany({
+      where: {
+        id: { not: currentUserId },
+        isBanned: false
+      },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        role: true,
+        city: true,
+        gender: true,
+        bio: true,
+        isVerified: true,
+        createdAt: true,
+        companion: {
+          select: {
+            hourlyRate: true,
+            rating: true,
+            services: true,
+            isAvailable: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const contacts = users.map((u) => ({
+      ...u,
+      isOnline: onlineIds.has(u.id)
+    }));
+
+    // Sort contacts: online users first, then verified, then others
+    contacts.sort((a, b) => {
+      if (a.isOnline && !b.isOnline) return -1;
+      if (!a.isOnline && b.isOnline) return 1;
+      if (a.isVerified && !b.isVerified) return -1;
+      if (!a.isVerified && b.isVerified) return 1;
+      return 0;
+    });
+
+    res.json({ contacts, onlineUserIds: Array.from(onlineIds) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch chat contacts' });
+  }
+});
+
 export default router;
