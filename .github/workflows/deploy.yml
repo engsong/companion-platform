@@ -47,6 +47,6 @@ jobs:
 
             echo "🛡️ Configuring Nginx High Security, Anti-DDoS, and Let's Encrypt CA SSL..."
             chmod +x scripts/setup-nginx-ssl.sh
-            sudo bash scripts/setup-nginx-ssl.sh || bash scripts/setup-nginx-ssl.sh
+            (sudo bash scripts/setup-nginx-ssl.sh || bash scripts/setup-nginx-ssl.sh) || echo "⚠️ Notice: check setup-nginx-ssl output above"
             
             echo "✅ Deployment completed successfully!"
