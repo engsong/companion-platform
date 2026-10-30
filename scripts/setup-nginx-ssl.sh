@@ -20,8 +20,6 @@ publish_diag() {
         nginx -t 2>&1 || true
         echo "--- SYSTEMCTL STATUS NGINX ---"
         systemctl status nginx --no-pager -l 2>&1 || service nginx status 2>&1 || true
-        echo "--- JOURNALCTL NGINX (LAST 25 LINES) ---"
-        journalctl -u nginx --no-pager -n 25 2>&1 || true
         echo "--- OPEN PORTS (80 / 443 / 3000 / 5173 / 5000) ---"
         ss -tlpn 2>&1 || netstat -tlpn 2>&1 || true
         echo "--- /etc/ssl/companion CERTIFICATES ---"
@@ -30,15 +28,15 @@ publish_diag() {
             echo "--- ACTIVE CERTIFICATE ISSUER & DATES ---"
             openssl x509 -in /etc/ssl/companion/fullchain.pem -issuer -dates -noout 2>&1 || true
         fi
-        echo "--- CERTIFICATES IN /etc/letsencrypt/live ---"
-        ls -la /etc/letsencrypt/live/ 2>&1 || true
-        ls -la /etc/letsencrypt/live/companion/ 2>&1 || true
+        echo "--- ALL DISCOVERED CERTIFICATES IN /etc/letsencrypt/live ---"
+        for cert in /etc/letsencrypt/live/*/fullchain.pem; do
+            if [ -f "$cert" ]; then
+                echo "FILE: $cert"
+                openssl x509 -in "$cert" -issuer -subject -dates -noout 2>&1 || true
+            fi
+        done
         echo "--- SITES-ENABLED ---"
         ls -la /etc/nginx/sites-enabled/ 2>&1 || true
-        echo "--- SITES-AVAILABLE ---"
-        ls -la /etc/nginx/sites-available/ 2>&1 || true
-        echo "--- CONF.D ---"
-        ls -la /etc/nginx/conf.d/ 2>&1 || true
     } > "$diag_file"
 
     # Push to companion-backend uploads volume for remote inspection at :5000/uploads/diag.txt
@@ -49,11 +47,9 @@ publish_diag() {
 publish_diag "START_SETUP"
 
 echo "🛡️  [1/6] Ensuring firewall and ports 80/443 are open..."
-# Stop and disable apache2 to prevent port 80 conflicts
 systemctl stop apache2 2>/dev/null || service apache2 stop 2>/dev/null || true
 systemctl disable apache2 2>/dev/null || true
 
-# Ensure UFW / iptables open HTTP and HTTPS
 if command -v ufw >/dev/null 2>&1; then
     ufw allow 80/tcp || true
     ufw allow 443/tcp || true
@@ -77,15 +73,7 @@ echo "acme-test-ok" > /var/www/certbot/.well-known/acme-challenge/test.txt
 chown -R www-data:www-data /var/www/certbot
 chmod -R 755 /var/www/certbot
 
-# Prepare /etc/ssl/companion for unified certificate storage
 mkdir -p /etc/ssl/companion
-
-# Clean up any broken non-certbot folders in /etc/letsencrypt
-if [ -d "/etc/letsencrypt/live/companion" ] && [ ! -f "/etc/letsencrypt/renewal/companion.conf" ]; then
-    echo "Purging incomplete manual letsencrypt folder to allow clean Certbot initialization..."
-    rm -rf /etc/letsencrypt/live/companion
-    rm -rf /etc/letsencrypt/archive/companion
-fi
 
 # Ensure bootstrap SSL certificate exists in /etc/ssl/companion so Nginx can start immediately
 if [ ! -f "/etc/ssl/companion/fullchain.pem" ] || [ ! -f "/etc/ssl/companion/privkey.pem" ]; then
@@ -126,55 +114,60 @@ systemctl restart nginx || service nginx restart || true
 # Test local ACME challenge resolution
 curl -s -f http://127.0.0.1/.well-known/acme-challenge/test.txt && echo "Local ACME challenge test passed!" || echo "ACME local test check."
 
-echo "🔐 [6/6] Requesting Official CA Certificates from Let's Encrypt..."
-# Check if currently using self-signed bootstrap certificate
-IS_CA_SIGNED=0
-if [ -f "/etc/letsencrypt/live/companion/fullchain.pem" ]; then
-    if openssl x509 -in "/etc/letsencrypt/live/companion/fullchain.pem" -issuer -noout 2>/dev/null | grep -qi "Let's Encrypt"; then
-        IS_CA_SIGNED=1
-    fi
-fi
+echo "🔐 [6/6] Finding or Requesting Official Let's Encrypt CA Certificates..."
 
-if [ "$IS_CA_SIGNED" -eq 1 ]; then
-    echo "Official Let's Encrypt certificate already active."
-    ln -sf /etc/letsencrypt/live/companion/fullchain.pem /etc/ssl/companion/fullchain.pem
-    ln -sf /etc/letsencrypt/live/companion/privkey.pem /etc/ssl/companion/privkey.pem
+find_and_link_le_cert() {
+    for cert in $(ls -td /etc/letsencrypt/live/*/fullchain.pem 2>/dev/null); do
+        if [ -f "$cert" ]; then
+            local issuer
+            issuer=$(openssl x509 -in "$cert" -issuer -noout 2>/dev/null || true)
+            if echo "$issuer" | grep -qi "Let's Encrypt"; then
+                local cert_dir
+                cert_dir="$(dirname "$cert")"
+                local privkey="$cert_dir/privkey.pem"
+                if [ -f "$privkey" ]; then
+                    echo "🎯 Found valid Let's Encrypt Certificate at: $cert ($issuer)"
+                    ln -sf "$cert" /etc/ssl/companion/fullchain.pem
+                    ln -sf "$privkey" /etc/ssl/companion/privkey.pem
+                    return 0
+                fi
+            fi
+        fi
+    done
+    return 1
+}
+
+# 1. Check if a genuine Let's Encrypt certificate already exists in any folder
+if find_and_link_le_cert; then
+    echo "✅ Active Let's Encrypt CA certificate linked successfully!"
     systemctl reload nginx || service nginx reload || true
 else
-    echo "Executing Certbot Webroot request for sao.on-excapp.app and msao.on-excapp.app..."
-    if certbot certonly --webroot -w /var/www/certbot \
+    echo "Requesting fresh Let's Encrypt certificate via Certbot Webroot..."
+    certbot certonly --webroot -w /var/www/certbot \
         --non-interactive --agree-tos \
         --email admin@on-excapp.app \
-        --cert-name companion \
+        --cert-name companion-ca \
         --force-renewal \
-        -d sao.on-excapp.app -d msao.on-excapp.app; then
-        echo "✅ Certbot Webroot issuance succeeded!"
-        ln -sf /etc/letsencrypt/live/companion/fullchain.pem /etc/ssl/companion/fullchain.pem
-        ln -sf /etc/letsencrypt/live/companion/privkey.pem /etc/ssl/companion/privkey.pem
-        systemctl reload nginx || service nginx reload || true
-    else
-        echo "⚠️ Webroot request failed, trying Standalone mode fallback..."
+        -d sao.on-excapp.app -d msao.on-excapp.app || true
+
+    if ! find_and_link_le_cert; then
+        echo "⚠️ Webroot request did not yield CA cert, falling back to Standalone mode..."
         systemctl stop nginx || service nginx stop || true
         certbot certonly --standalone \
             --non-interactive --agree-tos \
             --email admin@on-excapp.app \
-            --cert-name companion \
+            --cert-name companion-ca \
             --force-renewal \
             -d sao.on-excapp.app -d msao.on-excapp.app || true
-
-        if [ -f "/etc/letsencrypt/live/companion/fullchain.pem" ]; then
-            echo "✅ Certbot Standalone issuance succeeded!"
-            ln -sf /etc/letsencrypt/live/companion/fullchain.pem /etc/ssl/companion/fullchain.pem
-            ln -sf /etc/letsencrypt/live/companion/privkey.pem /etc/ssl/companion/privkey.pem
-        fi
         systemctl start nginx || service nginx start || true
+        find_and_link_le_cert || echo "Warning: CA cert linking pending."
     fi
 fi
 
 if nginx -t; then
     systemctl reload nginx || service nginx reload || true
     echo "=============================================================================="
-    echo "✅ SUCCESS! Both domains are running High-Security HTTPS (CA):"
+    echo "✅ Both domains configured with High-Security Nginx Reverse Proxy:"
     echo "   📱 Mobile App:  https://sao.on-excapp.app"
     echo "   💻 Admin Web:   https://msao.on-excapp.app"
     echo "   🛡️ Anti-DDoS:   Rate-limiting active (conn_limit + api_limit + auth_limit)"
