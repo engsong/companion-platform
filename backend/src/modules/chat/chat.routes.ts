@@ -119,8 +119,11 @@ router.post('/send', authenticateToken, async (req: AuthRequest, res: Response) 
       return res.status(400).json({ error: 'receiverId and content are required' });
     }
 
-    // Inspect content with Anti-Leak & Phone/Account Filter
-    const filterResult = inspectMessageContent(content);
+    // Inspect content with Anti-Leak & Phone/Account Filter (except safe LOCATION maps links)
+    const isLocation = messageType === 'LOCATION';
+    const filterResult = isLocation
+      ? { isBlocked: false, censoredContent: content, reasons: [] }
+      : inspectMessageContent(content);
 
     const message = await prisma.chatMessage.create({
       data: {

@@ -26,7 +26,9 @@ import {
   Paperclip,
   Mic,
   Volume2,
-  FileText
+  FileText,
+  Camera,
+  Navigation
 } from 'lucide-react';
 import { User, CompanionCard, PostItem, Booking, ChatMsg } from './types';
 
@@ -57,6 +59,12 @@ export default function App() {
   const socketRef = useRef<Socket | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
+  const [customLocationName, setCustomLocationName] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -351,7 +359,63 @@ export default function App() {
       console.error('Chat file upload failed:', err);
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
+      if (photoInputRef.current) photoInputRef.current.value = '';
+      if (cameraInputRef.current) cameraInputRef.current.value = '';
+      if (documentInputRef.current) documentInputRef.current.value = '';
     }
+  };
+
+  // Send Location Message (Google Maps Link & Venue Name)
+  const handleSendLocation = (mapsUrl: string, title: string) => {
+    if (!activeChatUser || !currentUser) return;
+    const content = `${title}\n${mapsUrl}`;
+
+    if (socketRef.current) {
+      socketRef.current.emit('send_message', {
+        senderId: currentUser.id,
+        receiverId: activeChatUser.id,
+        content,
+        messageType: 'LOCATION',
+      });
+    } else {
+      authFetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receiverId: activeChatUser.id,
+          content,
+          messageType: 'LOCATION',
+        }),
+      }).then((res) => {
+        if (res.message) {
+          setChatMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+          setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        }
+      });
+    }
+    setLocationModalOpen(false);
+    setAttachMenuOpen(false);
+  };
+
+  // Get Live Geolocation
+  const handleGetLiveLocation = () => {
+    if (!navigator.geolocation) {
+      handleSendLocation('https://www.google.com/maps?q=17.9757,102.6331', '📍 Meetup Location (Vientiane)');
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        const url = `https://www.google.com/maps?q=${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+        handleSendLocation(url, `📍 Live GPS Location (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+      },
+      (err) => {
+        console.warn('Geolocation access failed or denied:', err);
+        handleSendLocation('https://www.google.com/maps?q=17.9757,102.6331', '📍 Senglao Lounge & Bar (Vientiane)');
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
   };
 
   // Start voice recording
@@ -1186,6 +1250,47 @@ export default function App() {
                         );
                       }
 
+                      if (msg.messageType === 'LOCATION') {
+                        const lines = msg.content.split('\n');
+                        const locationTitle = lines.length > 1 ? lines[0] : 'Shared Location';
+                        const mapsUrl = lines.length > 1 ? lines[1] : lines[0];
+
+                        return (
+                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                            <div
+                              className={`max-w-[85%] p-3 rounded-2xl text-xs space-y-2.5 shadow-md ${
+                                isMe
+                                  ? 'bg-rose-600 text-white rounded-tr-none'
+                                  : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="p-2 rounded-xl bg-white/10 text-emerald-300 shrink-0">
+                                  <MapPin className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <div className="font-bold text-xs">{locationTitle}</div>
+                                  <div className="text-[10px] opacity-80">Meetup location coordinates</div>
+                                </div>
+                              </div>
+                              <a
+                                href={mapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center justify-center gap-1.5 w-full py-1.5 px-3 bg-white/15 hover:bg-white/25 rounded-xl text-xs font-bold text-white transition-colors"
+                              >
+                                <Navigation className="w-3.5 h-3.5" />
+                                <span>Open Google Maps</span>
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </a>
+                            </div>
+                            <span className="text-[9px] text-slate-500 mt-1 px-1">
+                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                           <div
@@ -1212,22 +1317,122 @@ export default function App() {
                   </div>
 
                   {/* Chat Input */}
-                  <form onSubmit={handleSendMessage} className="p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2">
-                    {/* Hidden file input */}
+                  <form onSubmit={handleSendMessage} className="p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2 relative">
+                    {/* Hidden input for Image Gallery */}
                     <input
                       type="file"
-                      ref={fileInputRef}
+                      ref={photoInputRef}
                       onChange={handleChatFileUpload}
-                      accept="image/*,audio/*,.pdf,.doc,.docx"
+                      accept="image/*"
                       className="hidden"
                     />
 
-                    {/* Paperclip Browse File / Picture Button */}
+                    {/* Hidden input for Camera */}
+                    <input
+                      type="file"
+                      ref={cameraInputRef}
+                      onChange={handleChatFileUpload}
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                    />
+
+                    {/* Hidden input for Documents/Files */}
+                    <input
+                      type="file"
+                      ref={documentInputRef}
+                      onChange={handleChatFileUpload}
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
+                      className="hidden"
+                    />
+
+                    {/* Attachment Options Action Menu */}
+                    {attachMenuOpen && (
+                      <div className="absolute bottom-16 left-3 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl shadow-2xl p-2 z-40 w-56 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2">
+                        {/* 1. Image / Photo Gallery */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachMenuOpen(false);
+                            photoInputRef.current?.click();
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-800 text-left transition-colors group"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                            <ImageIcon className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-white">Image / Photo</div>
+                            <div className="text-[10px] text-slate-400">Choose from gallery</div>
+                          </div>
+                        </button>
+
+                        {/* 2. Camera */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachMenuOpen(false);
+                            cameraInputRef.current?.click();
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-800 text-left transition-colors group"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                            <Camera className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-white">Camera</div>
+                            <div className="text-[10px] text-slate-400">Take a photo</div>
+                          </div>
+                        </button>
+
+                        {/* 3. Document / File */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachMenuOpen(false);
+                            documentInputRef.current?.click();
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-800 text-left transition-colors group"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-white">Document / File</div>
+                            <div className="text-[10px] text-slate-400">PDF, DOC, sheets</div>
+                          </div>
+                        </button>
+
+                        {/* 4. Location */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAttachMenuOpen(false);
+                            setLocationModalOpen(true);
+                          }}
+                          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-800 text-left transition-colors group"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                            <MapPin className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-white">Location</div>
+                            <div className="text-[10px] text-slate-400">Share GPS or meetup spot</div>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Paperclip Browse Button */}
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="p-2.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition-colors"
-                      title="Attach photo or file"
+                      onClick={() => setAttachMenuOpen(!attachMenuOpen)}
+                      className={`p-2.5 rounded-xl transition-colors ${
+                        attachMenuOpen
+                          ? 'bg-rose-500/20 text-rose-400'
+                          : 'text-slate-400 hover:text-rose-400 hover:bg-slate-800'
+                      }`}
+                      title="Attach photo, camera, file or location"
                     >
                       <Paperclip className="w-4 h-4" />
                     </button>
@@ -1853,6 +2058,84 @@ export default function App() {
                 className="max-h-[75vh] w-auto max-w-full rounded-2xl object-contain shadow-2xl border border-slate-800"
                 onClick={(e) => e.stopPropagation()}
               />
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 7: SHARE LOCATION / MEETUP VENUE */}
+        {locationModalOpen && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+              <div className="flex justify-between items-center">
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-emerald-400" />
+                  <span>Share Location / Meetup Spot</span>
+                </h3>
+                <button type="button" onClick={() => setLocationModalOpen(false)}>
+                  <X className="w-5 h-5 text-slate-400" />
+                </button>
+              </div>
+
+              {/* Fast Option 1: Live GPS Location */}
+              <button
+                type="button"
+                onClick={handleGetLiveLocation}
+                className="w-full p-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
+              >
+                <Navigation className="w-4 h-4" />
+                <span>Send My Current GPS Location</span>
+              </button>
+
+              <div className="relative flex items-center justify-center">
+                <div className="border-t border-slate-800 w-full" />
+                <span className="bg-slate-900 px-2 text-[10px] text-slate-500 uppercase tracking-wider">or pick a venue</span>
+              </div>
+
+              {/* Popular Vientiane Meetup Spots */}
+              <div className="space-y-1.5 max-h-48 overflow-y-auto no-scrollbar">
+                {[
+                  { name: 'Senglao Lounge & Bar', address: 'Vientiane Capital', url: 'https://www.google.com/maps?q=17.9757,102.6331' },
+                  { name: 'Mekong Riverside Night Market', address: 'Fa Ngum Rd, Vientiane', url: 'https://www.google.com/maps?q=17.9620,102.6070' },
+                  { name: 'That Dam Wine House', address: 'Chantabouly, Vientiane', url: 'https://www.google.com/maps?q=17.9676,102.6105' },
+                  { name: 'Joma Bakery Cafe Nam Phou', address: 'Nam Phou Fountain, Vientiane', url: 'https://www.google.com/maps?q=17.9644,102.6083' },
+                ].map((spot) => (
+                  <button
+                    key={spot.name}
+                    type="button"
+                    onClick={() => handleSendLocation(spot.url, `📍 ${spot.name} (${spot.address})`)}
+                    className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 rounded-xl text-left flex items-center justify-between text-xs transition-colors"
+                  >
+                    <div>
+                      <div className="font-semibold text-white">{spot.name}</div>
+                      <div className="text-[10px] text-slate-400">{spot.address}</div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </button>
+                ))}
+              </div>
+
+              {/* Custom Location input */}
+              <div className="space-y-2 pt-1 border-t border-slate-800">
+                <input
+                  type="text"
+                  value={customLocationName}
+                  onChange={(e) => setCustomLocationName(e.target.value)}
+                  placeholder="Or enter custom place name..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+                {customLocationName.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const encoded = encodeURIComponent(customLocationName.trim() + ' Vientiane Laos');
+                      handleSendLocation(`https://www.google.com/maps/search/?api=1&query=${encoded}`, `📍 ${customLocationName.trim()}`);
+                    }}
+                    className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold"
+                  >
+                    Send "{customLocationName.trim()}"
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

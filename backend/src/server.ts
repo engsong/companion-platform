@@ -80,8 +80,11 @@ io.on('connection', (socket) => {
     try {
       const { senderId, receiverId, content, bookingId, messageType = 'TEXT' } = data;
 
-      // 1. Inspect and filter content for phone numbers, bank accounts, and off-platform keywords
-      const filterResult = inspectMessageContent(content);
+      // 1. Inspect and filter content (except safe LOCATION maps links)
+      const isLocation = messageType === 'LOCATION';
+      const filterResult = isLocation
+        ? { isBlocked: false, censoredContent: content, reasons: [] }
+        : inspectMessageContent(content);
 
       // 2. Save message in DB
       const message = await prisma.chatMessage.create({
