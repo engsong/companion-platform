@@ -10,6 +10,7 @@ export interface User {
   gender?: string;
   isVerified: boolean;
   walletBalance: number;
+  walletId?: string;
   companion?: {
     id: string;
     hourlyRate: number;
@@ -114,7 +115,8 @@ export interface WalletTx {
 export interface WalletRecipient {
   id: string;
   name: string;
-  phone: string;
+  walletId: string;
+  phone?: string;
   avatar?: string | null;
   city?: string;
   role?: string;

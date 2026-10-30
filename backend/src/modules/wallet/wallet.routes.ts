@@ -2,25 +2,43 @@ import { Router, Response } from 'express';
 import { prisma } from '../../config/prisma';
 import { authenticateToken, AuthRequest } from '../../middleware/auth';
 import { uploadSlip } from '../../middleware/upload';
+import { generateWalletId } from '../../utils/walletId';
 
 const router = Router();
 
-// 1. Get current user wallet balance and transaction history
+// 1. Get current user wallet balance, unique walletId, and transaction history
 router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
 
-    const user = await prisma.user.findUnique({
+    let user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
         name: true,
         phone: true,
+        walletId: true,
         walletBalance: true
       }
     });
 
     if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Auto-generate unique walletId if not set yet
+    if (!user.walletId) {
+      const generated = generateWalletId();
+      user = await prisma.user.update({
+        where: { id: userId },
+        data: { walletId: generated },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          walletId: true,
+          walletBalance: true
+        }
+      });
+    }
 
     const transactions = await prisma.walletTransaction.findMany({
       where: { userId },
@@ -35,8 +53,9 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
 
     res.json({
       balance: user.walletBalance,
+      walletId: user.walletId,
       transactions,
-      walletQrData: `WALLET:${user.id}:${user.phone}`
+      walletQrData: `WALLET:${user.walletId}`
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to fetch wallet info' });
@@ -175,35 +194,38 @@ router.post('/withdraw', authenticateToken, async (req: AuthRequest, res: Respon
   }
 });
 
-// 5. Send Inquiry for Recipient Wallet (QR Payload or Phone)
+// 5. Send Inquiry for Recipient Wallet (QR Payload or Wallet ID)
 router.post('/inquiry', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const senderId = req.user!.id;
     const { targetIdentifier } = req.body;
 
     if (!targetIdentifier || typeof targetIdentifier !== 'string') {
-      return res.status(400).json({ error: 'Recipient QR code or phone number is required' });
+      return res.status(400).json({ error: 'Recipient QR code or Wallet ID is required' });
     }
 
     let cleanTarget = targetIdentifier.trim();
     if (cleanTarget.startsWith('WALLET:')) {
       const parts = cleanTarget.split(':');
-      // Format: WALLET:userId:phone
+      // Format: WALLET:walletId
       cleanTarget = parts[1] || parts[2] || cleanTarget;
     }
 
-    const targetUser = await prisma.user.findFirst({
+    let targetUser = await prisma.user.findFirst({
       where: {
         OR: [
+          { walletId: cleanTarget },
+          { walletId: cleanTarget.toUpperCase() },
+          { walletId: cleanTarget.replace(/-/g, '') },
           { id: cleanTarget },
-          { phone: cleanTarget },
-          { phone: cleanTarget.replace(/\D/g, '') }
+          { phone: cleanTarget }
         ]
       },
       select: {
         id: true,
         name: true,
         phone: true,
+        walletId: true,
         avatar: true,
         city: true,
         role: true
@@ -211,11 +233,21 @@ router.post('/inquiry', authenticateToken, async (req: AuthRequest, res: Respons
     });
 
     if (!targetUser) {
-      return res.status(404).json({ error: 'Recipient wallet account not found. Please verify QR or phone.' });
+      return res.status(404).json({ error: 'Recipient wallet account not found. Please verify Wallet ID or QR.' });
     }
 
     if (targetUser.id === senderId) {
       return res.status(400).json({ error: 'Cannot transfer money to your own wallet account' });
+    }
+
+    // Ensure recipient has a unique walletId
+    if (!targetUser.walletId) {
+      const generated = generateWalletId();
+      await prisma.user.update({
+        where: { id: targetUser.id },
+        data: { walletId: generated }
+      });
+      targetUser.walletId = generated;
     }
 
     res.json({
@@ -223,7 +255,7 @@ router.post('/inquiry', authenticateToken, async (req: AuthRequest, res: Respons
       recipient: {
         id: targetUser.id,
         name: targetUser.name,
-        phone: targetUser.phone,
+        walletId: targetUser.walletId,
         avatar: targetUser.avatar,
         city: targetUser.city,
         role: targetUser.role
@@ -246,23 +278,25 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
     }
 
     if (!targetIdentifier || typeof targetIdentifier !== 'string') {
-      return res.status(400).json({ error: 'Recipient Phone or Wallet QR is required' });
+      return res.status(400).json({ error: 'Recipient Wallet ID or QR is required' });
     }
 
-    // Parse target identifier: can be "WALLET:userId:phone", raw userId, or phone number
+    // Parse target identifier: can be "WALLET:walletId", raw walletId, or phone
     let cleanTarget = targetIdentifier.trim();
     if (cleanTarget.startsWith('WALLET:')) {
       const parts = cleanTarget.split(':');
       cleanTarget = parts[1] || parts[2] || cleanTarget;
     }
 
-    // Find recipient by ID or phone number
-    const targetUser = await prisma.user.findFirst({
+    // Find recipient by walletId, id, or phone
+    let targetUser = await prisma.user.findFirst({
       where: {
         OR: [
+          { walletId: cleanTarget },
+          { walletId: cleanTarget.toUpperCase() },
+          { walletId: cleanTarget.replace(/-/g, '') },
           { id: cleanTarget },
-          { phone: cleanTarget },
-          { phone: cleanTarget.replace(/\D/g, '') }
+          { phone: cleanTarget }
         ]
       }
     });
@@ -275,12 +309,28 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
       return res.status(400).json({ error: 'Cannot transfer money to your own wallet' });
     }
 
+    // Ensure targetUser has walletId
+    if (!targetUser.walletId) {
+      const genId = generateWalletId();
+      targetUser = await prisma.user.update({
+        where: { id: targetUser.id },
+        data: { walletId: genId }
+      });
+    }
+
     const referenceId = 'TX' + Date.now().toString().slice(-8) + Math.floor(1000 + Math.random() * 9000);
 
     // Perform atomic transfer
     const result = await prisma.$transaction(async (tx) => {
-      const sender = await tx.user.findUnique({ where: { id: senderId } });
+      let sender = await tx.user.findUnique({ where: { id: senderId } });
       if (!sender) throw new Error('Sender not found');
+
+      if (!sender.walletId) {
+        sender = await tx.user.update({
+          where: { id: senderId },
+          data: { walletId: generateWalletId() }
+        });
+      }
 
       if (sender.walletBalance < numAmount) {
         throw new Error(`Insufficient wallet balance. You have ${sender.walletBalance.toLocaleString()} LAK available.`);
@@ -294,7 +344,7 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
 
       // 2. Credit receiver
       const updatedReceiver = await tx.user.update({
-        where: { id: targetUser.id },
+        where: { id: targetUser!.id },
         data: { walletBalance: { increment: numAmount } }
       });
 
@@ -305,8 +355,8 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
           type: 'TRANSFER_OUT',
           amount: numAmount,
           status: 'COMPLETED',
-          targetUserId: targetUser.id,
-          accountName: targetUser.name,
+          targetUserId: targetUser!.id,
+          accountName: targetUser!.name,
           adminNote: `REF:${referenceId}`
         }
       });
@@ -314,7 +364,7 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
       // 4. Create TRANSFER_IN record for receiver
       const inTx = await tx.walletTransaction.create({
         data: {
-          userId: targetUser.id,
+          userId: targetUser!.id,
           type: 'TRANSFER_IN',
           amount: numAmount,
           status: 'COMPLETED',
@@ -336,13 +386,13 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
       debit: {
         userId: senderId,
         name: result.sender.name,
-        walletId: result.sender.phone || senderId,
+        walletId: result.sender.walletId || `CPW-${senderId.slice(0, 8).toUpperCase()}`,
         avatar: result.sender.avatar
       },
       credit: {
         userId: targetUser.id,
         name: targetUser.name,
-        walletId: targetUser.phone || targetUser.id,
+        walletId: targetUser.walletId || `CPW-${targetUser.id.slice(0, 8).toUpperCase()}`,
         avatar: targetUser.avatar
       }
     };

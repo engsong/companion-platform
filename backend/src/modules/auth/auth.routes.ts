@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { prisma } from '../../config/prisma';
 import { authenticateToken, AuthRequest } from '../../middleware/auth';
 import { uploadAvatar } from '../../middleware/upload';
+import { generateWalletId } from '../../utils/walletId';
 
 const router = Router();
 
@@ -22,6 +23,8 @@ router.post('/register', async (req: Request, res: Response) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+    const walletId = generateWalletId();
+
     const user = await prisma.user.create({
       data: {
         phone,
@@ -31,6 +34,7 @@ router.post('/register', async (req: Request, res: Response) => {
         gender,
         city,
         bio,
+        walletId,
         // If registering as companion, automatically create companion profile entry
         ...(role === 'COMPANION' ? {
           companion: {
@@ -64,6 +68,7 @@ router.post('/register', async (req: Request, res: Response) => {
         role: user.role,
         avatar: user.avatar,
         city: user.city,
+        walletId: user.walletId,
         isVerified: user.isVerified,
         walletBalance: user.walletBalance,
         companion: user.companion
@@ -101,8 +106,17 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid phone or password' });
     }
 
+    let currentUser = user;
+    if (!currentUser.walletId) {
+      currentUser = await prisma.user.update({
+        where: { id: user.id },
+        data: { walletId: generateWalletId() },
+        include: { companion: true }
+      });
+    }
+
     const token = jwt.sign(
-      { id: user.id, phone: user.phone, role: user.role },
+      { id: currentUser.id, phone: currentUser.phone, role: currentUser.role },
       process.env.JWT_SECRET || 'super-secret-companion-app-key-2026',
       { expiresIn: '30d' }
     );
@@ -111,16 +125,17 @@ router.post('/login', async (req: Request, res: Response) => {
       message: 'Login successful',
       token,
       user: {
-        id: user.id,
-        phone: user.phone,
-        name: user.name,
-        role: user.role,
-        avatar: user.avatar,
-        bio: user.bio,
-        city: user.city,
-        isVerified: user.isVerified,
-        walletBalance: user.walletBalance,
-        companion: user.companion
+        id: currentUser.id,
+        phone: currentUser.phone,
+        name: currentUser.name,
+        role: currentUser.role,
+        avatar: currentUser.avatar,
+        bio: currentUser.bio,
+        city: currentUser.city,
+        walletId: currentUser.walletId,
+        isVerified: currentUser.isVerified,
+        walletBalance: currentUser.walletBalance,
+        companion: currentUser.companion
       }
     });
   } catch (error: any) {
@@ -131,13 +146,21 @@ router.post('/login', async (req: Request, res: Response) => {
 // Get current user profile
 router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
-    const user = await prisma.user.findUnique({
+    let user = await prisma.user.findUnique({
       where: { id: req.user!.id },
       include: { companion: true }
     });
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!user.walletId) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { walletId: generateWalletId() },
+        include: { companion: true }
+      });
     }
 
     res.json({
@@ -151,6 +174,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
         bio: user.bio,
         gender: user.gender,
         city: user.city,
+        walletId: user.walletId,
         isVerified: user.isVerified,
         walletBalance: user.walletBalance,
         companion: user.companion
