@@ -1,8 +1,10 @@
+import fs from 'fs';
 import { Router, Response } from 'express';
 import { prisma } from '../../config/prisma';
 import { authenticateToken, AuthRequest } from '../../middleware/auth';
 import { inspectMessageContent } from '../../middleware/chatFilter';
 import { uploadChatMedia } from '../../middleware/upload';
+import { inspectImageContent } from '../../middleware/imageInspection';
 
 const router = Router();
 
@@ -151,6 +153,25 @@ router.post('/upload', authenticateToken, uploadChatMedia.single('file'), async 
 
     if (!receiverId || !req.file) {
       return res.status(400).json({ error: 'receiverId and file are required' });
+    }
+
+    // Inspect image uploads for QR payment codes, bank e-slips, and phone numbers (020/030)
+    if (req.file.mimetype.startsWith('image/')) {
+      const scan = await inspectImageContent(req.file.path);
+      if (scan.isBlocked) {
+        // Delete prohibited image from server disk immediately
+        try {
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        } catch (e) {
+          console.error('Failed to unlink prohibited file:', e);
+        }
+
+        return res.status(400).json({
+          error: 'SECURITY_BLOCKED',
+          message: 'Security Alert: Payment QR codes, bank transfer slips, and contact numbers (020/030) are blocked. For safety, date payments must be booked through the platform.',
+          reasons: scan.reasons
+        });
+      }
     }
 
     const fileUrl = `/uploads/chat/${req.file.filename}`;

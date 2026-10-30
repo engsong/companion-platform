@@ -332,6 +332,17 @@ export default function App() {
         body: formData,
       });
       const data = await res.json();
+
+      if (!res.ok || data.error === 'SECURITY_BLOCKED') {
+        const warningText =
+          data.message ||
+          (data.reasons && data.reasons.join(' • ')) ||
+          'Payment QR codes, bank transfer slips, and contact numbers (020/030) are strictly prohibited.';
+        setSecurityWarning(warningText);
+        setTimeout(() => setSecurityWarning(null), 8000);
+        return;
+      }
+
       if (data.message) {
         setChatMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
         setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
