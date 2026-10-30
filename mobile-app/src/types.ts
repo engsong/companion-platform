@@ -5,6 +5,7 @@ export interface User {
   email?: string;
   role: string;
   avatar: string | null;
+  coverImage?: string | null;
   bio?: string;
   city: string;
   gender?: string;
@@ -170,12 +171,15 @@ export interface UserProfileData {
   email?: string;
   role: string;
   avatar: string | null;
+  coverImage?: string | null;
   bio?: string | null;
   gender?: string | null;
   city: string;
   isVerified: boolean;
   walletId?: string | null;
   isOnline?: boolean;
+  isFriend?: boolean;
+  friendCount?: number;
   createdAt: string;
   companion?: {
     id: string;

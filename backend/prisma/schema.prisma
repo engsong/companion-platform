@@ -15,6 +15,7 @@ model User {
   role          String            @default("CLIENT") // CLIENT, COMPANION, ADMIN
   name          String
   avatar        String?
+  coverImage    String?
   bio           String?
   gender        String?
   city          String            @default("Vientiane")
@@ -37,8 +38,24 @@ model User {
   sentMessages     ChatMessage[]  @relation("SentMessages")
   receivedMessages ChatMessage[]  @relation("ReceivedMessages")
 
+  sentFriendRequests     Friendship[] @relation("FriendRequestsSent")
+  receivedFriendRequests Friendship[] @relation("FriendRequestsReceived")
+
   walletTransactions WalletTransaction[] @relation("UserWalletTransactions")
   receivedTransfers  WalletTransaction[] @relation("ReceivedTransfers")
+}
+
+model Friendship {
+  id          String   @id @default(uuid())
+  requesterId String
+  receiverId  String
+  status      String   @default("ACCEPTED") // PENDING, ACCEPTED
+  createdAt   DateTime @default(now())
+
+  requester   User     @relation("FriendRequestsSent", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver    User     @relation("FriendRequestsReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
 }
 
 model CompanionProfile {

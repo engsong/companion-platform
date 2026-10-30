@@ -26,3 +26,4 @@ export const uploadPostMedia = multer({ storage: createStorage('posts') });
 export const uploadSlip = multer({ storage: createStorage('slips') });
 export const uploadChatMedia = multer({ storage: createStorage('chat') });
 export const uploadBankQr = multer({ storage: createStorage('bankqr') });
+export const uploadCover = multer({ storage: createStorage('covers') });

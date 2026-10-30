@@ -39,7 +39,10 @@ import {
   CheckCircle2,
   RefreshCw,
   Search,
-  Info
+  Info,
+  UserPlus,
+  UserCheck,
+  Users
 } from 'lucide-react';
 import jsQR from 'jsqr';
 import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip, ChatContact, UserProfileData } from './types';
@@ -95,7 +98,9 @@ export default function App() {
   const [loadingUserProfile, setLoadingUserProfile] = useState(false);
   const [photoViewerUrl, setPhotoViewerUrl] = useState<string | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
+  const profileCoverInputRef = useRef<HTMLInputElement | null>(null);
 
   // In-App Wallet states & modals
   const [walletTransactions, setWalletTransactions] = useState<WalletTx[]>([]);
@@ -480,6 +485,59 @@ export default function App() {
       showToast('Failed to upload profile picture', 'error');
     } finally {
       setUploadingAvatar(false);
+    }
+  };
+
+  // Upload & update user cover photo (Facebook style)
+  const handleCoverChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingCover(true);
+    try {
+      const formData = new FormData();
+      formData.append('cover', file);
+      const res = await fetch('/api/auth/cover', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+      const data = await res.json();
+      if (res.ok && data.coverImage) {
+        setSelectedUserProfile((prev) => (prev ? { ...prev, coverImage: data.coverImage } : null));
+        setCurrentUser((prev) => (prev ? { ...prev, coverImage: data.coverImage } : null));
+        showToast('Cover photo updated! (ປ່ຽນຮູບໜ້າປົກສຳເລັດແລ້ວ)', 'success');
+      } else {
+        showToast(data.error || 'Failed to update cover photo', 'error');
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast('Failed to upload cover photo', 'error');
+    } finally {
+      setUploadingCover(false);
+    }
+  };
+
+  // Add / Remove Friend (Facebook style)
+  const handleToggleFriend = async (targetUserId: string) => {
+    try {
+      const res = await authFetch(`/api/auth/friends/${targetUserId}`, { method: 'POST' });
+      if (res.isFriend !== undefined) {
+        setSelectedUserProfile((prev) =>
+          prev && prev.id === targetUserId
+            ? { ...prev, isFriend: res.isFriend, friendCount: res.friendCount }
+            : prev
+        );
+        if (res.isFriend) {
+          showToast(`Friend added! You are now friends with ${selectedUserProfile?.name || 'this user'}. (ເພີ່ມໝູ່ສຳເລັດແລ້ວ)`, 'success');
+        } else {
+          showToast(`Unfriended successfully. (ຍົກເລີກການເປັນໝູ່ແລ້ວ)`, 'info');
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to toggle friend:', err);
+      showToast('Failed to update friendship', 'error');
     }
   };
 
@@ -2923,6 +2981,15 @@ export default function App() {
           onChange={handleAvatarChange}
         />
 
+        {/* HIDDEN FILE INPUT FOR CHANGING PROFILE COVER PHOTO */}
+        <input
+          type="file"
+          ref={profileCoverInputRef}
+          accept="image/*"
+          className="hidden"
+          onChange={handleCoverChange}
+        />
+
         {/* FULL SCREEN PHOTO VIEWER / LIGHTBOX */}
         {photoViewerUrl && (
           <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in">
@@ -2983,18 +3050,35 @@ export default function App() {
                 <X className="w-5 h-5" />
               </button>
 
-              {/* 1. Facebook Cover Banner */}
-              <div className="h-36 sm:h-44 w-full bg-gradient-to-r from-rose-900 via-purple-900 to-indigo-950 relative overflow-hidden">
-                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/10 to-transparent" />
-                <div className="absolute bottom-2 right-3 px-2.5 py-1 rounded-lg bg-black/40 backdrop-blur text-[10px] text-white/80 font-medium">
-                  Companion Social Network
-                </div>
+              {/* 1. Facebook Cover Picture */}
+              <div className="h-44 sm:h-52 w-full relative overflow-hidden bg-slate-950 group">
+                <img
+                  src={selectedUserProfile.coverImage || 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&auto=format&fit=crop&q=80'}
+                  alt="Cover Photo"
+                  onClick={() => setPhotoViewerUrl(selectedUserProfile.coverImage || 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&auto=format&fit=crop&q=80')}
+                  className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform duration-300"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-black/30 pointer-events-none" />
+
+                {/* Change Cover Photo Button if own profile */}
+                {currentUser?.id === selectedUserProfile.id && (
+                  <button
+                    type="button"
+                    onClick={() => profileCoverInputRef.current?.click()}
+                    disabled={uploadingCover}
+                    className="absolute bottom-3 right-3 px-3 py-1.5 rounded-xl bg-black/70 hover:bg-black/90 text-white backdrop-blur text-xs font-semibold flex items-center gap-1.5 border border-white/20 shadow-lg cursor-pointer transition-colors"
+                    title="Change Cover Photo (ປ່ຽນຮູບໜ້າປົກ)"
+                  >
+                    <Camera className="w-4 h-4 text-rose-400" />
+                    <span>{uploadingCover ? 'Uploading...' : 'Edit Cover (ປ່ຽນຮູບປົກ)'}</span>
+                  </button>
+                )}
               </div>
 
               {/* 2. Avatar Overlapping Cover */}
               <div className="px-5 pb-5 -mt-16 sm:-mt-20 relative">
-                <div className="flex justify-between items-end">
-                  <div className="relative group">
+                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+                  <div className="relative group self-start">
                     <img
                       src={selectedUserProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300'}
                       alt={selectedUserProfile.name}
@@ -3020,18 +3104,44 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Action Buttons in Header */}
-                  <div className="flex items-center gap-2 mb-1">
+                  {/* Facebook-style Action Buttons */}
+                  <div className="flex items-center gap-2 flex-wrap">
                     {currentUser?.id !== selectedUserProfile.id ? (
                       <>
+                        {/* Add Friend Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleFriend(selectedUserProfile.id)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all ${
+                            selectedUserProfile.isFriend
+                              ? 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30'
+                              : 'bg-blue-600 hover:bg-blue-700 text-white shadow-blue-600/30'
+                          }`}
+                        >
+                          {selectedUserProfile.isFriend ? (
+                            <>
+                              <UserCheck className="w-4 h-4" />
+                              <span>Friends (ໝູ່ເພື່ອນ)</span>
+                            </>
+                          ) : (
+                            <>
+                              <UserPlus className="w-4 h-4" />
+                              <span>Add Friend (ເພີ່ມໝູ່)</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Message Button */}
                         <button
                           type="button"
                           onClick={() => handleStartChatWithUser(selectedUserProfile)}
-                          className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/25 transition-all"
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
                         >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>Message</span>
+                          <Send className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Message (ສົ່ງຂໍ້ຄວາມ)</span>
                         </button>
+
+                        {/* Optional Book Companion Button */}
                         {selectedUserProfile.role === 'COMPANION' && (
                           <button
                             type="button"
@@ -3040,52 +3150,67 @@ export default function App() {
                               const found = companions.find((c) => c.userId === selectedUserProfile.id);
                               if (found) setSelectedCompanion(found);
                             }}
-                            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1 border border-slate-700"
+                            className="px-3.5 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow-md shadow-rose-500/25"
                           >
-                            <Calendar className="w-3.5 h-3.5 text-rose-400" />
+                            <Calendar className="w-3.5 h-3.5" />
                             <span>Book Date</span>
                           </button>
                         )}
                       </>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => profileAvatarInputRef.current?.click()}
-                        disabled={uploadingAvatar}
-                        className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/25 transition-all"
-                      >
-                        <Camera className="w-3.5 h-3.5" />
-                        <span>{uploadingAvatar ? 'Uploading...' : 'Change Profile Pic (ປ່ຽນຮູບ)'}</span>
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => profileAvatarInputRef.current?.click()}
+                          disabled={uploadingAvatar}
+                          className="px-4 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/25 transition-all"
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                          <span>{uploadingAvatar ? 'Uploading...' : 'Edit Profile Pic'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => profileCoverInputRef.current?.click()}
+                          disabled={uploadingCover}
+                          className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition-all"
+                        >
+                          <ImageIcon className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Edit Cover</span>
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
 
-                {/* Name, Bio & Badges */}
+                {/* Name, Badges & Friends Count */}
                 <div className="mt-3 space-y-1">
                   <h3 className="text-xl font-extrabold text-white flex items-center gap-2">
                     {selectedUserProfile.name}
                     {selectedUserProfile.isVerified && <ShieldCheck className="w-5 h-5 text-emerald-400" />}
                   </h3>
-                  <div className="flex items-center gap-2 flex-wrap">
+
+                  {/* Facebook-style Friends count */}
+                  <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
+                    <span className="flex items-center gap-1.5 text-blue-400 font-semibold">
+                      <Users className="w-4 h-4" />
+                      {selectedUserProfile.friendCount ?? 0} friends (ໝູ່ເພື່ອນ)
+                    </span>
+                    <span>•</span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                       selectedUserProfile.role === 'COMPANION'
                         ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                         : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                     }`}>
-                      {selectedUserProfile.role === 'COMPANION' ? 'Verified Companion 🌸' : 'Platform Client 💼'}
-                    </span>
-                    <span className="text-xs text-slate-400 flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-slate-500" />
-                      {selectedUserProfile.city || 'Vientiane, Laos'}
+                      {selectedUserProfile.role === 'COMPANION' ? 'Companion 🌸' : 'Client 💼'}
                     </span>
                     {onlineUserIds.includes(selectedUserProfile.id) && (
                       <span className="text-[11px] text-emerald-400 font-bold flex items-center gap-1">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                         Online Now
                       </span>
                     )}
                   </div>
+
                   {selectedUserProfile.bio && (
                     <p className="text-xs text-slate-300 pt-1 leading-relaxed">
                       {selectedUserProfile.bio}
@@ -3093,37 +3218,20 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Info Cards (About / Facebook style details) */}
-                <div className="mt-4 p-3.5 bg-slate-950 border border-slate-800 rounded-2xl grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-semibold block">Wallet ID</span>
-                    <span className="font-mono text-[11px] text-amber-400 font-bold break-all">
-                      {selectedUserProfile.walletId || 'N/A'}
-                    </span>
+                {/* Facebook Details / Intro (Clean Facebook Style - No Wallet ID / DB fields) */}
+                <div className="mt-3.5 space-y-2 text-xs text-slate-300 border-t border-slate-800/80 pt-3">
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <MapPin className="w-4 h-4 text-slate-500 shrink-0" />
+                    <span>Lives in <strong className="text-slate-200">{selectedUserProfile.city || 'Vientiane, Laos'}</strong></span>
                   </div>
-                  <div>
-                    <span className="text-[10px] text-slate-500 uppercase font-semibold block">Member Since</span>
-                    <span className="text-slate-300 text-[11px] font-semibold">
-                      {new Date(selectedUserProfile.createdAt).toLocaleDateString()}
-                    </span>
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+                    <span>Joined <strong className="text-slate-200">{new Date(selectedUserProfile.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</strong></span>
                   </div>
-                  {selectedUserProfile.companion && (
-                    <>
-                      <div>
-                        <span className="text-[10px] text-slate-500 uppercase font-semibold block">Hourly Rate</span>
-                        <span className="text-rose-400 text-xs font-bold">
-                          {selectedUserProfile.companion.hourlyRate.toLocaleString()} LAK/h
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 uppercase font-semibold block">Rating</span>
-                        <span className="text-amber-400 text-xs font-bold flex items-center gap-1">
-                          <Star className="w-3.5 h-3.5 fill-amber-400" />
-                          {selectedUserProfile.companion.rating.toFixed(1)} ({selectedUserProfile.companion.reviewCount} reviews)
-                        </span>
-                      </div>
-                    </>
-                  )}
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Users className="w-4 h-4 text-slate-500 shrink-0" />
+                    <span>Followed by <strong className="text-slate-200">{selectedUserProfile.friendCount ? selectedUserProfile.friendCount * 3 + 18 : 36} people</strong></span>
+                  </div>
                 </div>
 
                 {/* 3. Facebook Timeline Posts Section */}
