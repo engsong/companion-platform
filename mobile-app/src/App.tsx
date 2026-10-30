@@ -180,7 +180,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: authPhone, password: authPassword }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(res.status === 502 ? 'Backend service is starting up (502). Please wait a moment and try again.' : `Server error (${res.status})`);
+      }
       if (!res.ok) throw new Error(data.error || 'Login failed');
       localStorage.setItem('mobile_token', data.token);
       setToken(data.token);
@@ -209,7 +215,13 @@ export default function App() {
           city: authCity,
         }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(res.status === 502 ? 'Backend service is starting up (502). Please wait a moment and try again.' : `Server error (${res.status})`);
+      }
       if (!res.ok) throw new Error(data.error || 'Registration failed');
       localStorage.setItem('mobile_token', data.token);
       setToken(data.token);
