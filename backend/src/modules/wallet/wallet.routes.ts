@@ -18,7 +18,8 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
         name: true,
         phone: true,
         walletId: true,
-        walletBalance: true
+        walletBalance: true,
+        bankQrUrl: true
       }
     });
 
@@ -35,7 +36,8 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
           name: true,
           phone: true,
           walletId: true,
-          walletBalance: true
+          walletBalance: true,
+          bankQrUrl: true
         }
       });
     }
@@ -54,6 +56,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
     res.json({
       balance: user.walletBalance,
       walletId: user.walletId,
+      bankQrUrl: user.bankQrUrl,
       transactions,
       walletQrData: `WALLET:${user.walletId}`
     });
@@ -132,25 +135,26 @@ router.post(
   }
 );
 
-// 4. Request Wallet Withdrawal
+// 4. Request Wallet Withdrawal (using Bank QR)
 router.post('/withdraw', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { amount, bankName, accountNumber, accountName } = req.body;
+    const { amount, bankQrUrl, bankName } = req.body;
 
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'Valid withdrawal amount is required' });
     }
 
-    if (!bankName || !accountNumber || !accountName) {
-      return res.status(400).json({ error: 'Bank name, account number, and account name are required' });
-    }
-
-    // Atomic transaction: verify balance and deduct immediately to prevent double spending
+    // Atomic transaction: verify balance, user bank QR and deduct immediately
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new Error('User not found');
+
+      const targetBankQr = bankQrUrl || user.bankQrUrl;
+      if (!targetBankQr) {
+        throw new Error('Bank QR is required. Please upload your Bank QR before requesting withdrawal.');
+      }
 
       if (user.walletBalance < numAmount) {
         throw new Error(`Insufficient wallet balance. You have ${user.walletBalance.toLocaleString()} LAK available.`);
@@ -169,9 +173,10 @@ router.post('/withdraw', authenticateToken, async (req: AuthRequest, res: Respon
           type: 'WITHDRAW',
           amount: numAmount,
           status: 'PENDING',
-          bankName,
-          accountNumber,
-          accountName
+          bankName: bankName || 'Bank QR (Lao QR / BCEL One)',
+          accountNumber: user.walletId || user.phone,
+          accountName: user.name,
+          bankQrUrl: targetBankQr
         }
       });
 
@@ -185,7 +190,7 @@ router.post('/withdraw', authenticateToken, async (req: AuthRequest, res: Respon
     }
 
     res.status(201).json({
-      message: 'Withdrawal request submitted! Admin will transfer funds to your bank account.',
+      message: 'Withdrawal request submitted! Admin will transfer funds to your Bank QR.',
       balance: result.updatedUser.walletBalance,
       transaction: result.transaction
     });

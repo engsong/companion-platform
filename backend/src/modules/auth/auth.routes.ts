@@ -3,18 +3,29 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../../config/prisma';
 import { authenticateToken, AuthRequest } from '../../middleware/auth';
-import { uploadAvatar } from '../../middleware/upload';
+import { uploadAvatar, uploadBankQr } from '../../middleware/upload';
 import { generateWalletId } from '../../utils/walletId';
 
 const router = Router();
 
 // Register User
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', uploadBankQr.single('bankQr'), async (req: Request, res: Response) => {
   try {
     const { phone, password, name, role = 'CLIENT', gender, city = 'Vientiane', bio } = req.body;
 
     if (!phone || !password || !name) {
       return res.status(400).json({ error: 'Phone, password, and name are required' });
+    }
+
+    let bankQrUrl: string | undefined = undefined;
+    if (req.file) {
+      bankQrUrl = `/uploads/bankqr/${req.file.filename}`;
+    } else if (req.body.bankQrUrl) {
+      bankQrUrl = req.body.bankQrUrl;
+    }
+
+    if (!bankQrUrl) {
+      return res.status(400).json({ error: 'Bank QR image is required to complete registration' });
     }
 
     const existingUser = await prisma.user.findUnique({ where: { phone } });
@@ -35,6 +46,7 @@ router.post('/register', async (req: Request, res: Response) => {
         city,
         bio,
         walletId,
+        bankQrUrl,
         // If registering as companion, automatically create companion profile entry
         ...(role === 'COMPANION' ? {
           companion: {
@@ -69,6 +81,7 @@ router.post('/register', async (req: Request, res: Response) => {
         avatar: user.avatar,
         city: user.city,
         walletId: user.walletId,
+        bankQrUrl: user.bankQrUrl,
         isVerified: user.isVerified,
         walletBalance: user.walletBalance,
         companion: user.companion
@@ -133,6 +146,7 @@ router.post('/login', async (req: Request, res: Response) => {
         bio: currentUser.bio,
         city: currentUser.city,
         walletId: currentUser.walletId,
+        bankQrUrl: currentUser.bankQrUrl,
         isVerified: currentUser.isVerified,
         walletBalance: currentUser.walletBalance,
         companion: currentUser.companion
@@ -175,6 +189,7 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
         gender: user.gender,
         city: user.city,
         walletId: user.walletId,
+        bankQrUrl: user.bankQrUrl,
         isVerified: user.isVerified,
         walletBalance: user.walletBalance,
         companion: user.companion
@@ -182,6 +197,32 @@ router.get('/me', authenticateToken, async (req: AuthRequest, res: Response) => 
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to fetch user' });
+  }
+});
+
+// Upload / Update User Bank QR
+router.post('/bank-qr', authenticateToken, uploadBankQr.single('bankQr'), async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    let bankQrUrl: string | undefined = undefined;
+    if (req.file) {
+      bankQrUrl = `/uploads/bankqr/${req.file.filename}`;
+    } else if (req.body.bankQrUrl) {
+      bankQrUrl = req.body.bankQrUrl;
+    }
+
+    if (!bankQrUrl) {
+      return res.status(400).json({ error: 'Bank QR image is required' });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: { bankQrUrl }
+    });
+
+    res.json({ message: 'Bank QR updated successfully', bankQrUrl: updated.bankQrUrl });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to update Bank QR' });
   }
 });
 

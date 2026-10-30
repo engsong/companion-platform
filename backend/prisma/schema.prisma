@@ -22,6 +22,7 @@ model User {
   isBanned      Boolean           @default(false)
   walletBalance Float             @default(0.0)
   walletId      String?           @unique
+  bankQrUrl     String?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
@@ -182,6 +183,7 @@ model WalletTransaction {
   bankName      String?
   accountNumber String?
   accountName   String?
+  bankQrUrl     String?
   slipUrl       String?
   
   // QR Transfer details

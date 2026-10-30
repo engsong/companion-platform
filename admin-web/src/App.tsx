@@ -1162,74 +1162,101 @@ export default function App() {
                       </p>
                     </div>
                   ) : (
-                    pendingWithdrawals.map((item) => (
-                      <div
-                        key={item.id}
-                        className="p-5 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col md:flex-row gap-5 items-start justify-between"
-                      >
-                        <div className="space-y-3 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold rounded-lg flex items-center gap-1">
-                              <ArrowUpRight className="w-3.5 h-3.5" />
-                              PAYOUT REQUEST
-                            </span>
-                            <span className="text-xs text-slate-400">
-                              {new Date(item.createdAt).toLocaleString()}
-                            </span>
+                    pendingWithdrawals.map((item) => {
+                      const qrToDisplay = item.bankQrUrl || item.user.bankQrUrl;
+                      return (
+                        <div
+                          key={item.id}
+                          className="p-5 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col md:flex-row gap-5 items-start justify-between"
+                        >
+                          <div className="flex gap-4 items-start flex-1">
+                            {/* Bank QR Image Thumbnail & Click-to-Enlarge */}
+                            <div
+                              className="w-32 h-36 bg-white rounded-xl border border-slate-700 p-1.5 overflow-hidden cursor-pointer relative group shrink-0 flex items-center justify-center shadow-lg"
+                              onClick={() => qrToDisplay && setPreviewImage(qrToDisplay)}
+                            >
+                              {qrToDisplay ? (
+                                <>
+                                  <img
+                                    src={qrToDisplay}
+                                    alt="User Bank QR"
+                                    className="w-full h-full object-contain"
+                                  />
+                                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-[11px] text-white gap-1 font-semibold rounded-xl">
+                                    <Eye className="w-5 h-5 text-amber-400" />
+                                    <span>Scan / Zoom QR</span>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="text-center p-2 text-[10px] text-slate-500 font-medium">
+                                  No Bank QR attached
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="space-y-2 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold rounded-lg flex items-center gap-1">
+                                  <ArrowUpRight className="w-3.5 h-3.5" />
+                                  PAYOUT TO BANK QR
+                                </span>
+                                <span className="text-xs text-slate-400">
+                                  {new Date(item.createdAt).toLocaleString()}
+                                </span>
+                              </div>
+
+                              <div>
+                                <div className="text-2xl font-black text-amber-400 tracking-tight">
+                                  -{item.amount.toLocaleString()} <span className="text-xs font-normal text-slate-400">LAK</span>
+                                </div>
+                                <p className="text-xs text-slate-300 mt-1 font-semibold">
+                                  Recipient: <span className="text-white font-bold">{item.user.name}</span>
+                                </p>
+                              </div>
+
+                              {/* Bank Details & QR Instructions Card */}
+                              <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1.5 text-xs">
+                                <div className="flex justify-between items-center text-[11px]">
+                                  <span className="text-slate-400">Phone Number:</span>
+                                  <span className="font-mono text-slate-200">{item.user.phone}</span>
+                                </div>
+                                {item.user.walletId && (
+                                  <div className="flex justify-between items-center text-[11px]">
+                                    <span className="text-slate-400">Wallet ID:</span>
+                                    <span className="font-mono text-emerald-400 font-semibold">{item.user.walletId}</span>
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-1.5 text-[11px] text-amber-400 font-semibold pt-1 border-t border-slate-800/80">
+                                  <QrCode className="w-3.5 h-3.5" />
+                                  <span>Scan the QR code with BCEL One or banking app to transfer funds.</span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
 
-                          <div>
-                            <div className="text-lg font-black text-amber-400">
-                              -{item.amount.toLocaleString()} <span className="text-xs font-normal text-slate-400">LAK</span>
-                            </div>
-                            <p className="text-xs text-slate-400 mt-0.5">
-                              User: <strong className="text-white">{item.user.name}</strong> ({item.user.phone})
-                            </p>
-                          </div>
-
-                          {/* Bank details card for Admin to do transfer */}
-                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1.5 text-xs">
-                            <div className="flex justify-between items-center text-[11px]">
-                              <span className="text-slate-400">Receiving Bank:</span>
-                              <span className="font-bold text-white">{item.bankName}</span>
-                            </div>
-                            <div className="flex justify-between items-center text-[11px]">
-                              <span className="text-slate-400">Account Number:</span>
-                              <span className="font-mono font-bold text-emerald-400 text-sm select-all">
-                                {item.accountNumber}
-                              </span>
-                            </div>
-                            <div className="flex justify-between items-center text-[11px]">
-                              <span className="text-slate-400">Beneficiary Name:</span>
-                              <span className="font-bold text-white uppercase select-all">
-                                {item.accountName}
-                              </span>
-                            </div>
+                          {/* Payout Action buttons */}
+                          <div className="flex md:flex-col gap-2 w-full md:w-auto shrink-0 self-center md:self-start">
+                            <button
+                              onClick={() => handleWithdrawReview(item.id, 'APPROVE')}
+                              className="flex-1 md:flex-initial px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-amber-600/20 transition-all"
+                            >
+                              <CreditCard className="w-4 h-4" />
+                              <span>Mark as Paid Out</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setRejectModal({ type: 'withdraw', id: item.id, targetName: item.user.name });
+                                setRejectReason('');
+                              }}
+                              className="flex-1 md:flex-initial px-4 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 rounded-xl text-xs font-bold border border-rose-500/30 flex items-center justify-center gap-1.5 transition-all"
+                            >
+                              <XCircle className="w-4 h-4" />
+                              <span>Reject & Refund</span>
+                            </button>
                           </div>
                         </div>
-
-                        {/* Payout Action buttons */}
-                        <div className="flex md:flex-col gap-2 w-full md:w-auto shrink-0">
-                          <button
-                            onClick={() => handleWithdrawReview(item.id, 'APPROVE')}
-                            className="flex-1 md:flex-initial px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-amber-600/20 transition-all"
-                          >
-                            <CreditCard className="w-4 h-4" />
-                            <span>Mark as Paid Out</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRejectModal({ type: 'withdraw', id: item.id, targetName: item.user.name });
-                              setRejectReason('');
-                            }}
-                            className="flex-1 md:flex-initial px-4 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 rounded-xl text-xs font-bold border border-rose-500/30 flex items-center justify-center gap-1.5 transition-all"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            <span>Reject & Refund</span>
-                          </button>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               )}

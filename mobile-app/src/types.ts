@@ -11,6 +11,7 @@ export interface User {
   isVerified: boolean;
   walletBalance: number;
   walletId?: string;
+  bankQrUrl?: string | null;
   companion?: {
     id: string;
     hourlyRate: number;
@@ -106,6 +107,7 @@ export interface WalletTx {
   bankName?: string | null;
   accountNumber?: string | null;
   accountName?: string | null;
+  bankQrUrl?: string | null;
   slipUrl?: string | null;
   adminNote?: string | null;
   targetUser?: { id: string; name: string; phone: string; avatar: string | null } | null;

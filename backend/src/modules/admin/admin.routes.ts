@@ -361,7 +361,7 @@ router.get('/wallet/pending-withdrawals', async (req: AuthRequest, res: Response
     const pending = await prisma.walletTransaction.findMany({
       where: { type: 'WITHDRAW', status: 'PENDING' },
       include: {
-        user: { select: { id: true, name: true, phone: true, avatar: true, walletBalance: true } }
+        user: { select: { id: true, name: true, phone: true, avatar: true, walletBalance: true, walletId: true, bankQrUrl: true } }
       },
       orderBy: { createdAt: 'desc' }
     });

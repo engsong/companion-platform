@@ -93,6 +93,7 @@ export interface WalletTransactionItem {
   bankName: string | null;
   accountNumber: string | null;
   accountName: string | null;
+  bankQrUrl?: string | null;
   slipUrl: string | null;
   targetUserId: string | null;
   adminNote: string | null;
@@ -104,6 +105,8 @@ export interface WalletTransactionItem {
     phone: string;
     avatar?: string | null;
     walletBalance?: number;
+    walletId?: string;
+    bankQrUrl?: string | null;
   };
   targetUser?: {
     id: string;
