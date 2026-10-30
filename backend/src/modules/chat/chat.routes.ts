@@ -171,8 +171,8 @@ router.post('/upload', authenticateToken, uploadChatMedia.single('file'), async 
 
     const io = req.app.get('io');
     if (io) {
+      // Emit to receiver's room (sender receives it directly via HTTP response body)
       io.to(`user_${receiverId}`).emit('new_message', message);
-      io.to(`user_${senderId}`).emit('new_message', message);
       if (bookingId) {
         io.to(`booking_${bookingId}`).emit('booking_message', message);
       }

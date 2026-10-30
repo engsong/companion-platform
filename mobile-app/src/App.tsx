@@ -241,13 +241,13 @@ export default function App() {
     socket.emit('join_user', currentUser.id);
 
     socket.on('new_message', (msg: ChatMsg) => {
-      setChatMessages((prev) => [...prev, msg]);
+      setChatMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
       loadMyBookings();
       setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     });
 
     socket.on('message_sent', (data: { message: ChatMsg; securityWarning?: string }) => {
-      setChatMessages((prev) => [...prev, data.message]);
+      setChatMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
       if (data.securityWarning) {
         setSecurityWarning(data.securityWarning);
         setTimeout(() => setSecurityWarning(null), 5000);
@@ -301,7 +301,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ receiverId: activeChatUser.id, content }),
       });
-      if (res.message) setChatMessages((prev) => [...prev, res.message]);
+      if (res.message) {
+        setChatMessages((prev) => (prev.some((m) => m.id === res.message.id) ? prev : [...prev, res.message]));
+      }
       if (res.securityWarning) {
         setSecurityWarning(res.securityWarning);
         setTimeout(() => setSecurityWarning(null), 5000);
@@ -331,7 +333,7 @@ export default function App() {
       });
       const data = await res.json();
       if (data.message) {
-        setChatMessages((prev) => [...prev, data.message]);
+        setChatMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
         setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
       }
     } catch (err) {
@@ -373,7 +375,7 @@ export default function App() {
             });
             const data = await res.json();
             if (data.message) {
-              setChatMessages((prev) => [...prev, data.message]);
+              setChatMessages((prev) => (prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]));
               setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
             }
           } catch (err) {
