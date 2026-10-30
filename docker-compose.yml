@@ -11,7 +11,7 @@ services:
       PORT: 5000
       DATABASE_URL: "postgresql://postgres:123456789@172.18.0.1:5432/companion_db?schema=public"
       JWT_SECRET: "super-secret-companion-app-key-2026"
-      BASE_URL: "http://150.95.30.215:5000"
+      BASE_URL: "https://sao.on-excapp.app"
       CORS_ORIGIN: "*"
     ports:
       - "5000:5000"

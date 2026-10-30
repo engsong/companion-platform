@@ -44,5 +44,9 @@ jobs:
             docker ps --filter "name=companion"
             docker compose logs --tail=40 backend
             curl -f http://localhost:5000/api/health || (echo "❌ Backend health check failed! See logs above." && exit 1)
+
+            echo "🛡️ Configuring Nginx High Security, Anti-DDoS, and Let's Encrypt CA SSL..."
+            chmod +x scripts/setup-nginx-ssl.sh
+            sudo bash scripts/setup-nginx-ssl.sh || bash scripts/setup-nginx-ssl.sh
             
             echo "✅ Deployment completed successfully!"
