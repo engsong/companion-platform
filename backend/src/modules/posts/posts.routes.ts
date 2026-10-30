@@ -5,26 +5,28 @@ import { uploadPostMedia } from '../../middleware/upload';
 
 const router = Router();
 
-// Create new post
+// Create new post (photo, video, or text status)
 router.post(
   '/',
   authenticateToken,
   uploadPostMedia.single('media'),
   async (req: AuthRequest, res: Response) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'Media file (image or video) is required' });
+      const { caption = '', mediaType = 'IMAGE' } = req.body;
+      const file = req.file;
+
+      if (!file && (!caption || !caption.trim())) {
+        return res.status(400).json({ error: 'Please enter text or select a photo/media' });
       }
 
-      const { caption, mediaType = 'IMAGE' } = req.body;
-      const mediaUrl = `/uploads/posts/${req.file.filename}`;
+      const mediaUrl = file ? `/uploads/posts/${file.filename}` : '';
 
       const post = await prisma.post.create({
         data: {
           userId: req.user!.id,
-          caption,
-          mediaUrl,
-          mediaType: mediaType.toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE',
+          caption: caption?.trim() || null,
+          mediaUrl: mediaUrl,
+          mediaType: file ? (mediaType.toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE') : 'TEXT',
           isApproved: true
         },
         include: {
@@ -144,6 +146,27 @@ router.post('/:postId/comments', authenticateToken, async (req: AuthRequest, res
     res.status(201).json({ message: 'Comment added', comment });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to add comment' });
+  }
+});
+
+// Delete own post
+router.delete('/:postId', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { postId } = req.params;
+    const userId = req.user!.id;
+
+    const post = await prisma.post.findUnique({ where: { id: postId } });
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+    if (post.userId !== userId && req.user!.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Unauthorized to delete this post' });
+    }
+
+    await prisma.post.delete({ where: { id: postId } });
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to delete post' });
   }
 });
 

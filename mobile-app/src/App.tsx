@@ -42,7 +42,8 @@ import {
   Info,
   UserPlus,
   UserCheck,
-  Users
+  Users,
+  Trash2
 } from 'lucide-react';
 import jsQR from 'jsqr';
 import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip, ChatContact, UserProfileData } from './types';
@@ -101,6 +102,12 @@ export default function App() {
   const [uploadingCover, setUploadingCover] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const profileCoverInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Profile Timeline Post creation state
+  const [profilePostCaption, setProfilePostCaption] = useState('');
+  const [profilePostFile, setProfilePostFile] = useState<File | null>(null);
+  const [submittingProfilePost, setSubmittingProfilePost] = useState(false);
+  const profilePostFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // In-App Wallet states & modals
   const [walletTransactions, setWalletTransactions] = useState<WalletTx[]>([]);
@@ -541,6 +548,74 @@ export default function App() {
     }
   };
 
+  // Create Post directly from User Profile Timeline
+  const handleCreateProfilePost = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!profilePostCaption.trim() && !profilePostFile) {
+      showToast('Please type something or choose a photo to post (ກະລຸນາພິມຂໍ້ຄວາມ ຫຼື ເລືອກຮູບພາບ)', 'info');
+      return;
+    }
+
+    setSubmittingProfilePost(true);
+    try {
+      const formData = new FormData();
+      if (profilePostCaption.trim()) {
+        formData.append('caption', profilePostCaption.trim());
+      }
+      if (profilePostFile) {
+        formData.append('media', profilePostFile);
+        formData.append('mediaType', profilePostFile.type.startsWith('video') ? 'VIDEO' : 'IMAGE');
+      }
+
+      const res = await fetch('/api/posts', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (res.ok) {
+        setProfilePostCaption('');
+        setProfilePostFile(null);
+        if (profilePostFileInputRef.current) profilePostFileInputRef.current.value = '';
+        showToast('Post published to your timeline! (ໂພສລົງໂປຣໄຟລ໌ສຳເລັດແລ້ວ)', 'success');
+
+        // Refresh user profile so the new post appears immediately
+        if (selectedUserProfile) {
+          handleOpenUserProfile(selectedUserProfile.id);
+        }
+        // Refresh feed posts
+        const data = await authFetch('/api/posts');
+        if (data.posts) setPosts(data.posts);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || 'Failed to publish post', 'error');
+      }
+    } catch (err: any) {
+      console.error('Failed to create post from profile:', err);
+      showToast('Network error while publishing post.', 'error');
+    } finally {
+      setSubmittingProfilePost(false);
+    }
+  };
+
+  // Delete Post
+  const handleDeletePost = async (postId: string) => {
+    if (!window.confirm('Are you sure you want to delete this post? (ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບໂພສນີ້?)')) return;
+    try {
+      const res = await authFetch(`/api/posts/${postId}`, { method: 'DELETE' });
+      if (res.message) {
+        showToast('Post deleted (ລຶບໂພສແລ້ວ)', 'info');
+        if (selectedUserProfile) {
+          handleOpenUserProfile(selectedUserProfile.id);
+        }
+        const data = await authFetch('/api/posts');
+        if (data.posts) setPosts(data.posts);
+      }
+    } catch (err) {
+      console.error('Delete post error:', err);
+    }
+  };
+
   // Load conversation list and contacts
   useEffect(() => {
     if (activeTab === 'chat' && token) {
@@ -846,16 +921,18 @@ export default function App() {
     }
   };
 
-  // Create Media Post
+  // Create Media Post (Feed Modal)
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!postFile) return;
+    if (!postFile && !postCaption.trim()) return;
 
     try {
       const formData = new FormData();
-      formData.append('caption', postCaption);
-      formData.append('media', postFile);
-      formData.append('mediaType', 'IMAGE');
+      if (postCaption.trim()) formData.append('caption', postCaption.trim());
+      if (postFile) {
+        formData.append('media', postFile);
+        formData.append('mediaType', postFile.type.startsWith('video') ? 'VIDEO' : 'IMAGE');
+      }
 
       const res = await fetch('/api/posts', {
         method: 'POST',
@@ -867,9 +944,14 @@ export default function App() {
         setNewPostModal(false);
         setPostCaption('');
         setPostFile(null);
+        showToast('Post created! (ໂພສສຳເລັດແລ້ວ)', 'success');
         // Refresh feed
         const data = await authFetch('/api/posts');
         if (data.posts) setPosts(data.posts);
+        // Refresh profile if viewing own profile
+        if (selectedUserProfile) {
+          handleOpenUserProfile(selectedUserProfile.id);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -3234,39 +3316,145 @@ export default function App() {
                       <ImageIcon className="w-4 h-4 text-rose-400" />
                       Posts & Media ({selectedUserProfile.posts?.length || 0})
                     </h4>
-                    <span className="text-[10px] text-slate-500">Timeline (ໂພສ)</span>
+                    {currentUser?.id === selectedUserProfile.id ? (
+                      <button
+                        type="button"
+                        onClick={() => profilePostFileInputRef.current?.click()}
+                        className="px-2.5 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all"
+                      >
+                        <PlusCircle className="w-3.5 h-3.5" />
+                        <span>Add Post (ໂພສໃໝ່)</span>
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-slate-500">Timeline (ໂພສ)</span>
+                    )}
                   </div>
+
+                  {/* Facebook-style Create Post Box on My Profile */}
+                  {currentUser?.id === selectedUserProfile.id && (
+                    <div className="p-3.5 bg-slate-900 border border-slate-800/90 rounded-2xl space-y-3 shadow-lg">
+                      <div className="flex items-start gap-2.5">
+                        <img
+                          src={currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                          alt={currentUser.name}
+                          className="w-9 h-9 rounded-full object-cover border border-slate-700 mt-0.5 shrink-0"
+                        />
+                        <div className="flex-1 space-y-2.5">
+                          <textarea
+                            rows={profilePostFile ? 2 : 2}
+                            value={profilePostCaption}
+                            onChange={(e) => setProfilePostCaption(e.target.value)}
+                            placeholder={`What's on your mind, ${currentUser.name}? (ທ່ານກຳລັງຄິດຫຍັງຢູ່?)`}
+                            className="w-full bg-slate-950/70 border border-slate-800 focus:border-rose-500 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 outline-none resize-none transition-all"
+                          />
+
+                          {/* Selected Photo/Video Preview */}
+                          {profilePostFile && (
+                            <div className="relative rounded-xl overflow-hidden border border-slate-800 max-h-48 bg-black">
+                              <img
+                                src={URL.createObjectURL(profilePostFile)}
+                                alt="Preview"
+                                className="w-full h-40 object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProfilePostFile(null);
+                                  if (profilePostFileInputRef.current) profilePostFileInputRef.current.value = '';
+                                }}
+                                className="absolute top-2 right-2 p-1.5 rounded-full bg-black/75 hover:bg-black text-white backdrop-blur transition-colors"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between pt-1">
+                            <input
+                              type="file"
+                              ref={profilePostFileInputRef}
+                              accept="image/*,video/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) setProfilePostFile(file);
+                              }}
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => profilePostFileInputRef.current?.click()}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700/60 transition-colors"
+                            >
+                              <ImageIcon className="w-4 h-4 text-emerald-400" />
+                              <span>{profilePostFile ? 'Change Photo' : 'Photo / Media (ຮູບພາບ)'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={submittingProfilePost || (!profilePostCaption.trim() && !profilePostFile)}
+                              onClick={handleCreateProfilePost}
+                              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-rose-500 hover:bg-rose-600 disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-rose-500/20 transition-all"
+                            >
+                              {submittingProfilePost ? (
+                                <span>Posting...</span>
+                              ) : (
+                                <>
+                                  <Send className="w-3.5 h-3.5" />
+                                  <span>Post (ໂພສ)</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {(!selectedUserProfile.posts || selectedUserProfile.posts.length === 0) ? (
                     <div className="p-8 text-center text-slate-500 text-xs bg-slate-950/60 border border-slate-800/60 rounded-2xl">
-                      No posts shared by this user yet.
+                      {currentUser?.id === selectedUserProfile.id
+                        ? "You haven't shared any posts yet. Type a message or upload a photo above to share with friends! (ທ່ານຍັງບໍ່ທັນມີໂພສ, ລອງພິມຂໍ້ຄວາມ ຫຼື ເພີ່ມຮູບພາບຂ້າງເທິງນີ້ໄດ້ເລີຍ!)"
+                        : "No posts shared by this user yet."}
                     </div>
                   ) : (
                     <div className="space-y-4">
                       {selectedUserProfile.posts.map((p) => (
                         <div key={p.id} className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-3 shadow-lg">
                           {/* Post Author Header */}
-                          <div className="flex items-center gap-2.5">
-                            <img
-                              src={selectedUserProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
-                              alt={selectedUserProfile.name}
-                              className="w-9 h-9 rounded-full object-cover border border-slate-800"
-                            />
-                            <div>
-                              <span className="text-xs font-bold text-white block">{selectedUserProfile.name}</span>
-                              <span className="text-[10px] text-slate-500">
-                                {new Date(p.createdAt).toLocaleDateString()} • {new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src={selectedUserProfile.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                                alt={selectedUserProfile.name}
+                                className="w-9 h-9 rounded-full object-cover border border-slate-800"
+                              />
+                              <div>
+                                <span className="text-xs font-bold text-white block">{selectedUserProfile.name}</span>
+                                <span className="text-[10px] text-slate-500">
+                                  {new Date(p.createdAt).toLocaleDateString()} • {new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
                             </div>
+                            {(currentUser?.id === p.userId || currentUser?.id === selectedUserProfile.id) && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePost(p.id)}
+                                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                title="Delete Post (ລຶບໂພສ)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
 
                           {/* Caption */}
                           {p.caption && (
-                            <p className="text-xs text-slate-200 leading-relaxed">{p.caption}</p>
+                            <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-line">{p.caption}</p>
                           )}
 
                           {/* Media Image */}
-                          {p.mediaUrl && (
+                          {p.mediaUrl && p.mediaUrl.trim() !== '' && (
                             <div
                               onClick={() => setPhotoViewerUrl(p.mediaUrl)}
                               className="rounded-xl overflow-hidden bg-black max-h-80 cursor-pointer group relative"
