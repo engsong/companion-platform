@@ -104,6 +104,14 @@ export default function App() {
   const [eslipModal, setEslipModal] = useState<WalletTransferEslip | null>(null);
   const [copiedId, setCopiedId] = useState(false);
   const [eslipSavedToast, setEslipSavedToast] = useState(false);
+  const [appToast, setAppToast] = useState<{ type: 'success' | 'error' | 'info'; title?: string; message: string } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success', title?: string) => {
+    setAppToast({ type, message, title });
+    setTimeout(() => {
+      setAppToast((curr) => (curr?.message === message ? null : curr));
+    }, 4500);
+  };
 
   const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
   const scannerStreamRef = useRef<MediaStream | null>(null);
@@ -584,7 +592,7 @@ export default function App() {
       }, 1000);
     } catch (err) {
       console.error('Microphone access denied:', err);
-      alert('Microphone access is required to record voice notes.');
+      showToast('Microphone access is required to record voice notes.', 'error');
     }
   };
 
@@ -751,7 +759,7 @@ export default function App() {
   const handleTopupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!topupSlipFile) {
-      alert('Please select and attach your payment transfer slip.');
+      showToast('Please select and attach your payment transfer slip.', 'error');
       return;
     }
     setTopupLoading(true);
@@ -768,12 +776,12 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit top-up');
-      alert('✅ Top-up slip submitted! Admin will verify and deposit funds within 1-3 minutes.');
+      showToast('Top-up slip submitted! Admin will verify and deposit funds within 1-3 minutes.', 'success', 'ຕື່ມເງິນສຳເລັດ / Top-Up Submitted');
       setTopupModal(false);
       setTopupSlipFile(null);
       loadWalletInfo();
     } catch (err: any) {
-      alert(err.message || 'Error submitting top-up');
+      showToast(err.message || 'Error submitting top-up', 'error');
     } finally {
       setTopupLoading(false);
     }
@@ -905,16 +913,16 @@ export default function App() {
   const handleTransferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!recipientInfo) {
-      alert('Recipient information missing. Please scan QR or verify Wallet ID.');
+      showToast('Recipient information missing. Please scan QR or verify Wallet ID.', 'error');
       return;
     }
     const num = parseFloat(transferAmount);
     if (isNaN(num) || num <= 0) {
-      alert('Please enter a valid transfer amount.');
+      showToast('Please enter a valid transfer amount.', 'error');
       return;
     }
     if ((currentUser?.walletBalance || 0) < num) {
-      alert(`Insufficient balance. You have ${(currentUser?.walletBalance || 0).toLocaleString()} LAK available.`);
+      showToast(`Insufficient balance. You have ${(currentUser?.walletBalance || 0).toLocaleString()} LAK available.`, 'error');
       return;
     }
 
@@ -949,7 +957,7 @@ export default function App() {
       }
       loadWalletInfo();
     } catch (err: any) {
-      alert(err.message || 'Error processing transfer');
+      showToast(err.message || 'Error processing transfer', 'error');
     } finally {
       setTransferLoading(false);
     }
@@ -1074,11 +1082,11 @@ export default function App() {
     e.preventDefault();
     const num = parseFloat(withdrawAmount);
     if (isNaN(num) || num <= 0) {
-      alert('Please enter a valid withdrawal amount.');
+      showToast('Please enter a valid withdrawal amount.', 'error');
       return;
     }
     if ((currentUser?.walletBalance || 0) < num) {
-      alert(`Insufficient balance. You have ${(currentUser?.walletBalance || 0).toLocaleString()} LAK available.`);
+      showToast(`Insufficient balance. You have ${(currentUser?.walletBalance || 0).toLocaleString()} LAK available.`, 'error');
       return;
     }
 
@@ -1105,7 +1113,7 @@ export default function App() {
       }
 
       if (!targetBankQr) {
-        alert('Please attach or upload your Bank QR Code (BCEL One / Lao QR) so admin can transfer funds.');
+        showToast('Please attach or upload your Bank QR Code (BCEL One / Lao QR) so admin can transfer funds.', 'error');
         setWithdrawLoading(false);
         return;
       }
@@ -1123,13 +1131,13 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Withdrawal request failed');
-      alert('✅ Withdrawal request submitted! Admin will scan your Bank QR and transfer funds within 5-15 minutes.');
+      showToast('Withdrawal request submitted! Admin will scan your Bank QR and transfer funds within 5-15 minutes.', 'success', 'ຖອນເງິນສຳເລັດ / Request Sent');
       setWithdrawModal(false);
       setWithdrawQrFile(null);
       setWithdrawQrPreview(null);
       loadWalletInfo();
     } catch (err: any) {
-      alert(err.message || 'Error submitting withdrawal');
+      showToast(err.message || 'Error submitting withdrawal', 'error');
     } finally {
       setWithdrawLoading(false);
     }
@@ -1140,6 +1148,56 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 flex justify-center p-0 selection:bg-rose-500 selection:text-white">
         <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 flex flex-col min-h-screen shadow-2xl relative overflow-y-auto p-6 justify-center">
+          {/* Sleek App Toast Notification */}
+          {appToast && (
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm z-[9999] animate-in fade-in slide-in-from-top-4 duration-300">
+              <div
+                className={`p-3.5 rounded-2xl shadow-2xl backdrop-blur-md border flex items-start gap-3 ${
+                  appToast.type === 'success'
+                    ? 'bg-slate-900/95 border-emerald-500/50 text-white shadow-emerald-950/60'
+                    : appToast.type === 'error'
+                    ? 'bg-slate-900/95 border-rose-500/50 text-white shadow-rose-950/60'
+                    : 'bg-slate-900/95 border-sky-500/50 text-white shadow-sky-950/60'
+                }`}
+              >
+                <div
+                  className={`p-2 rounded-xl shrink-0 ${
+                    appToast.type === 'success'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : appToast.type === 'error'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-sky-500/20 text-sky-400'
+                  }`}
+                >
+                  {appToast.type === 'success' ? (
+                    <CheckCircle2 className="w-5 h-5" />
+                  ) : appToast.type === 'error' ? (
+                    <AlertTriangle className="w-5 h-5" />
+                  ) : (
+                    <Sparkles className="w-5 h-5" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 pt-0.5">
+                  {appToast.title && (
+                    <h4 className="text-xs font-bold text-white tracking-wide mb-0.5">
+                      {appToast.title}
+                    </h4>
+                  )}
+                  <p className="text-xs text-slate-200 leading-relaxed break-words font-medium">
+                    {appToast.message}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAppToast(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 shrink-0 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="text-center mb-6">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center text-white mx-auto shadow-lg shadow-rose-600/30 mb-3">
               <Sparkles className="w-7 h-7" />
@@ -1396,6 +1454,56 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 flex justify-center selection:bg-rose-500 selection:text-white">
       {/* Mobile Device Frame Container (Max width 440px for true mobile app feel) */}
       <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 flex flex-col min-h-screen shadow-2xl relative overflow-hidden">
+
+        {/* Sleek App Toast Notification (Replaces Browser alert) */}
+        {appToast && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm z-[9999] animate-in fade-in slide-in-from-top-4 duration-300">
+            <div
+              className={`p-3.5 rounded-2xl shadow-2xl backdrop-blur-md border flex items-start gap-3 ${
+                appToast.type === 'success'
+                  ? 'bg-slate-900/95 border-emerald-500/50 text-white shadow-emerald-950/60'
+                  : appToast.type === 'error'
+                  ? 'bg-slate-900/95 border-rose-500/50 text-white shadow-rose-950/60'
+                  : 'bg-slate-900/95 border-sky-500/50 text-white shadow-sky-950/60'
+              }`}
+            >
+              <div
+                className={`p-2 rounded-xl shrink-0 ${
+                  appToast.type === 'success'
+                    ? 'bg-emerald-500/20 text-emerald-400'
+                    : appToast.type === 'error'
+                    ? 'bg-rose-500/20 text-rose-400'
+                    : 'bg-sky-500/20 text-sky-400'
+                }`}
+              >
+                {appToast.type === 'success' ? (
+                  <CheckCircle2 className="w-5 h-5" />
+                ) : appToast.type === 'error' ? (
+                  <AlertTriangle className="w-5 h-5" />
+                ) : (
+                  <Sparkles className="w-5 h-5" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0 pt-0.5">
+                {appToast.title && (
+                  <h4 className="text-xs font-bold text-white tracking-wide mb-0.5">
+                    {appToast.title}
+                  </h4>
+                )}
+                <p className="text-xs text-slate-200 leading-relaxed break-words font-medium">
+                  {appToast.message}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAppToast(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 shrink-0 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Security Warning Toast */}
         {securityWarning && (
