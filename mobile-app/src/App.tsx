@@ -4415,12 +4415,20 @@ export default function App() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {/* Change photo button if own photo or profile */}
-                {currentUser && (
+                {/* Change photo button appears ONLY if viewing own profile, own cover, or own avatar */}
+                {currentUser && (!selectedUserProfile || selectedUserProfile.id === currentUser.id) && (
+                  photoViewerUrl === currentUser.avatar ||
+                  photoViewerUrl === currentUser.coverImage ||
+                  (selectedUserProfile && selectedUserProfile.id === currentUser.id)
+                ) && (
                   <button
                     type="button"
                     onClick={() => {
-                      if (photoViewerUrl.includes('cover') || photoViewerUrl === currentUser.coverImage || selectedUserProfile?.coverImage === photoViewerUrl) {
+                      const isCover =
+                        photoViewerUrl === currentUser.coverImage ||
+                        (selectedUserProfile && selectedUserProfile.coverImage === photoViewerUrl) ||
+                        photoViewerUrl.includes('cover');
+                      if (isCover) {
                         profileCoverInputRef.current?.click();
                       } else {
                         profileAvatarInputRef.current?.click();
