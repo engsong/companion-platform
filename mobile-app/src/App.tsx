@@ -119,7 +119,7 @@ export default function App() {
   const qrFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [withdrawModal, setWithdrawModal] = useState(false);
-  const [withdrawAmount, setWithdrawAmount] = useState('500000');
+  const [withdrawAmount, setWithdrawAmount] = useState('10000');
   const [withdrawBank, setWithdrawBank] = useState('Banque Pour Le Commerce Exterieur Lao (BCEL)');
   const [withdrawAccountNo, setWithdrawAccountNo] = useState('');
   const [withdrawAccountName, setWithdrawAccountName] = useState('');
@@ -2988,12 +2988,12 @@ export default function App() {
                 </span>
               </div>
 
-              <form onSubmit={handleTopupSubmit} className="space-y-3">
+              <form onSubmit={handleTopupSubmit} noValidate className="space-y-3">
                 {/* Quick Amount Selector */}
                 <div>
                   <label className="block text-[11px] text-slate-400 font-semibold mb-1.5">Select Amount (LAK)</label>
                   <div className="grid grid-cols-3 gap-1.5">
-                    {['200000', '500000', '1000000', '2000000', '5000000'].map((amt) => (
+                    {['10000', '50000', '100000', '200000', '500000', '1000000'].map((amt) => (
                       <button
                         key={amt}
                         type="button"
@@ -3015,8 +3015,9 @@ export default function App() {
                   <label className="block text-[11px] text-slate-400 font-semibold mb-1">Custom Amount (LAK)</label>
                   <input
                     type="number"
-                    min="10000"
-                    step="5000"
+                    min="1"
+                    step="any"
+                    placeholder="Enter any amount (e.g. 10000)"
                     value={topupAmount}
                     onChange={(e) => setTopupAmount(e.target.value)}
                     required
@@ -3212,7 +3213,7 @@ export default function App() {
                     </div>
                   ) : (
                     /* STEP 2: RECIPIENT VERIFIED & ENTER AMOUNT */
-                    <form onSubmit={handleTransferSubmit} className="space-y-3">
+                    <form onSubmit={handleTransferSubmit} noValidate className="space-y-3">
                       {/* Recipient Card */}
                       <div className="p-3 bg-slate-950 border border-emerald-500/30 rounded-xl flex items-center justify-between">
                         <div className="flex items-center gap-2.5">
@@ -3252,8 +3253,9 @@ export default function App() {
                         </label>
                         <input
                           type="number"
-                          min="1000"
-                          step="1000"
+                          min="1"
+                          step="any"
+                          placeholder="Enter any amount (e.g. 10000)"
                           value={transferAmount}
                           onChange={(e) => setTransferAmount(e.target.value)}
                           required
@@ -3264,7 +3266,7 @@ export default function App() {
 
                       {/* Quick Preset Buttons */}
                       <div className="flex gap-1.5">
-                        {['50000', '100000', '200000', '500000', '1000000'].map((amt) => (
+                        {['10000', '50000', '100000', '200000', '500000'].map((amt) => (
                           <button
                             key={amt}
                             type="button"
@@ -3368,18 +3370,48 @@ export default function App() {
                 <span className="font-bold text-amber-400">{(currentUser?.walletBalance || 0).toLocaleString()} LAK</span>
               </div>
 
-              <form onSubmit={handleWithdrawSubmit} className="space-y-3">
+              <form onSubmit={handleWithdrawSubmit} noValidate className="space-y-3">
                 <div>
-                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">Withdrawal Amount (LAK)</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[11px] text-slate-400 font-semibold">
+                      Withdrawal Amount (LAK)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setWithdrawAmount(String(currentUser?.walletBalance || 0))}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold"
+                    >
+                      Withdraw All (ຖອນທັງໝົດ)
+                    </button>
+                  </div>
                   <input
                     type="number"
-                    min="50000"
-                    step="10000"
+                    min="1"
+                    step="any"
+                    placeholder="Enter any amount (e.g. 10000)"
                     value={withdrawAmount}
                     onChange={(e) => setWithdrawAmount(e.target.value)}
                     required
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-500"
                   />
+
+                  {/* Quick Select Chips */}
+                  <div className="grid grid-cols-4 gap-1.5 mt-2">
+                    {['10000', '50000', '100000', '500000'].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setWithdrawAmount(amt)}
+                        className={`py-1 px-1.5 rounded-lg text-[10px] font-bold border transition-colors ${
+                          withdrawAmount === amt
+                            ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        {(Number(amt) / 1000).toLocaleString()}k
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Receiving Bank QR (Displayed directly below Amount) */}
