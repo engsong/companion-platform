@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '../../config/prisma';
 import { authenticateToken, AuthRequest } from '../../middleware/auth';
 import { inspectMessageContent } from '../../middleware/chatFilter';
+import { uploadChatMedia } from '../../middleware/upload';
 
 const router = Router();
 
@@ -139,6 +140,47 @@ router.post('/send', authenticateToken, async (req: AuthRequest, res: Response) 
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to send message' });
+  }
+});
+
+// Upload image, audio voice note, or file in chat
+router.post('/upload', authenticateToken, uploadChatMedia.single('file'), async (req: AuthRequest, res: Response) => {
+  try {
+    const senderId = req.user!.id;
+    const { receiverId, bookingId, messageType = 'IMAGE' } = req.body;
+
+    if (!receiverId || !req.file) {
+      return res.status(400).json({ error: 'receiverId and file are required' });
+    }
+
+    const fileUrl = `/uploads/chat/${req.file.filename}`;
+
+    const message = await prisma.chatMessage.create({
+      data: {
+        senderId,
+        receiverId,
+        bookingId: bookingId || null,
+        content: fileUrl,
+        messageType: messageType || 'IMAGE',
+        isBlocked: false
+      },
+      include: {
+        sender: { select: { id: true, name: true, avatar: true } }
+      }
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${receiverId}`).emit('new_message', message);
+      io.to(`user_${senderId}`).emit('new_message', message);
+      if (bookingId) {
+        io.to(`booking_${bookingId}`).emit('booking_message', message);
+      }
+    }
+
+    res.status(201).json({ message });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to upload chat file' });
   }
 });
 

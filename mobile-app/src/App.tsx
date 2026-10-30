@@ -22,7 +22,11 @@ import {
   DollarSign,
   ChevronRight,
   Sparkles,
-  LogOut
+  LogOut,
+  Paperclip,
+  Mic,
+  Volume2,
+  FileText
 } from 'lucide-react';
 import { User, CompanionCard, PostItem, Booking, ChatMsg } from './types';
 
@@ -52,6 +56,13 @@ export default function App() {
   const [securityWarning, setSecurityWarning] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<any>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Booking Offer modal
   const [offerModal, setOfferModal] = useState(false);
@@ -295,6 +306,108 @@ export default function App() {
         setSecurityWarning(res.securityWarning);
         setTimeout(() => setSecurityWarning(null), 5000);
       }
+    }
+  };
+
+  // Send picture or file in chat
+  const handleChatFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeChatUser) return;
+
+    const isAudio = file.type.startsWith('audio');
+    const isImage = file.type.startsWith('image');
+    const messageType = isAudio ? 'AUDIO' : (isImage ? 'IMAGE' : 'FILE');
+
+    const formData = new FormData();
+    formData.append('receiverId', activeChatUser.id);
+    formData.append('messageType', messageType);
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/chat/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.message) {
+        setChatMessages((prev) => [...prev, data.message]);
+        setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      }
+    } catch (err) {
+      console.error('Chat file upload failed:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Start voice recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (audioBlob.size > 0 && activeChatUser) {
+          const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: 'audio/webm' });
+          const formData = new FormData();
+          formData.append('receiverId', activeChatUser.id);
+          formData.append('messageType', 'AUDIO');
+          formData.append('file', audioFile);
+
+          try {
+            const res = await fetch('/api/chat/upload', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              body: formData,
+            });
+            const data = await res.json();
+            if (data.message) {
+              setChatMessages((prev) => [...prev, data.message]);
+              setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+            }
+          } catch (err) {
+            console.error('Failed to send voice message:', err);
+          }
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      timerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Microphone access denied:', err);
+      alert('Microphone access is required to record voice notes.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      clearInterval(timerRef.current);
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      audioChunksRef.current = [];
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      clearInterval(timerRef.current);
     }
   };
 
@@ -642,33 +755,6 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 flex justify-center selection:bg-rose-500 selection:text-white">
       {/* Mobile Device Frame Container (Max width 440px for true mobile app feel) */}
       <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 flex flex-col min-h-screen shadow-2xl relative overflow-hidden">
-        {/* Top Demo User Switcher Bar */}
-        <div className="bg-slate-950 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-[11px] shrink-0">
-          <div className="flex items-center gap-1.5 text-slate-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Role: <strong className="text-rose-400">{currentUser?.role || 'CLIENT'}</strong></span>
-            <span className="px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 font-mono text-[9px] rounded border border-emerald-500/30">v1.0.1 Live</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-slate-500 mr-1">Switch:</span>
-            <button
-              onClick={() => switchAccount('02088888888', 'pass123')}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                currentUser?.phone === '02088888888' ? 'bg-rose-500 text-white' : 'bg-slate-800 text-slate-300'
-              }`}
-            >
-              Client (Somphone)
-            </button>
-            <button
-              onClick={() => switchAccount('02077777777', 'pass123')}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                currentUser?.phone === '02077777777' ? 'bg-rose-500 text-white' : 'bg-slate-800 text-slate-300'
-              }`}
-            >
-              Companion (Mina)
-            </button>
-          </div>
-        </div>
 
         {/* Security Warning Toast */}
         {securityWarning && (
@@ -1008,6 +1094,85 @@ export default function App() {
                         );
                       }
 
+                      if (msg.messageType === 'IMAGE') {
+                        return (
+                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                            <div
+                              onClick={() => setPreviewImage(msg.content)}
+                              className={`max-w-[75%] p-1.5 rounded-2xl overflow-hidden cursor-pointer shadow-md transition-transform hover:scale-[1.02] ${
+                                isMe
+                                  ? 'bg-rose-600 rounded-tr-none'
+                                  : 'bg-slate-800 rounded-tl-none border border-slate-700'
+                              }`}
+                            >
+                              <img
+                                src={msg.content}
+                                alt="Chat attachment"
+                                className="rounded-xl max-h-56 max-w-full object-cover"
+                              />
+                            </div>
+                            <span className="text-[9px] text-slate-500 mt-1 px-1">
+                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      if (msg.messageType === 'AUDIO') {
+                        return (
+                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                            <div
+                              className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-xs ${
+                                isMe
+                                  ? 'bg-rose-600 text-white rounded-tr-none'
+                                  : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 mb-1.5 opacity-90">
+                                <Volume2 className="w-3.5 h-3.5 text-rose-200" />
+                                <span className="font-semibold text-[11px]">Voice Note</span>
+                              </div>
+                              <audio
+                                controls
+                                src={msg.content}
+                                className="w-48 h-8 rounded-lg"
+                              />
+                            </div>
+                            <span className="text-[9px] text-slate-500 mt-1 px-1">
+                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      if (msg.messageType === 'FILE') {
+                        const filename = msg.content.split('/').pop() || 'Attachment';
+                        return (
+                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                            <div
+                              className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-xs ${
+                                isMe
+                                  ? 'bg-rose-600 text-white rounded-tr-none'
+                                  : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'
+                              }`}
+                            >
+                              <a
+                                href={msg.content}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 hover:underline text-white font-medium break-all"
+                              >
+                                <FileText className="w-4 h-4 shrink-0 text-amber-300" />
+                                <span>{filename}</span>
+                              </a>
+                            </div>
+                            <span className="text-[9px] text-slate-500 mt-1 px-1">
+                              {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                           <div
@@ -1035,20 +1200,84 @@ export default function App() {
 
                   {/* Chat Input */}
                   <form onSubmit={handleSendMessage} className="p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-2">
+                    {/* Hidden file input */}
                     <input
-                      type="text"
-                      value={msgInput}
-                      onChange={(e) => setMsgInput(e.target.value)}
-                      placeholder="Type message... (e.g. meet at rooftop?)"
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleChatFileUpload}
+                      accept="image/*,audio/*,.pdf,.doc,.docx"
+                      className="hidden"
                     />
+
+                    {/* Paperclip Browse File / Picture Button */}
                     <button
-                      type="submit"
-                      disabled={!msgInput.trim()}
-                      className="p-2.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white rounded-xl shadow-md transition-colors"
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition-colors"
+                      title="Attach photo or file"
                     >
-                      <Send className="w-4 h-4" />
+                      <Paperclip className="w-4 h-4" />
                     </button>
+
+                    {isRecording ? (
+                      /* Voice Recording Active Bar */
+                      <div className="flex-1 flex items-center justify-between bg-rose-950/40 border border-rose-500/30 rounded-xl px-3 py-1.5 animate-pulse">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                          <span className="text-xs font-semibold text-rose-300">
+                            Recording {Math.floor(recordingTime / 60)}:{String(recordingTime % 60).padStart(2, '0')}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={cancelRecording}
+                            className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs"
+                            title="Cancel recording"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={stopRecording}
+                            className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold shadow flex items-center gap-1"
+                            title="Send Voice Note"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Send</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Standard Text Input */
+                      <>
+                        <input
+                          type="text"
+                          value={msgInput}
+                          onChange={(e) => setMsgInput(e.target.value)}
+                          placeholder="Type message... (e.g. meet at rooftop?)"
+                          className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                        />
+                        {msgInput.trim() ? (
+                          <button
+                            type="submit"
+                            className="p-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl shadow-md transition-colors"
+                            title="Send text message"
+                          >
+                            <Send className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={startRecording}
+                            className="p-2.5 bg-slate-800 hover:bg-rose-600 hover:text-white text-slate-300 rounded-xl shadow-md transition-colors"
+                            title="Record voice message"
+                          >
+                            <Mic className="w-4 h-4" />
+                          </button>
+                        )}
+                      </>
+                    )}
                   </form>
                 </div>
               )}
@@ -1588,6 +1817,30 @@ export default function App() {
                 Submit for Admin Approval
               </button>
             </form>
+          </div>
+        )}
+
+        {/* MODAL 6: IMAGE PREVIEW LIGHTBOX */}
+        {previewImage && (
+          <div
+            className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+            onClick={() => setPreviewImage(null)}
+          >
+            <div className="relative max-w-sm w-full max-h-[85vh] flex flex-col items-center">
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="absolute -top-10 right-0 p-1.5 text-white/80 hover:text-white bg-slate-800/80 rounded-full"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <img
+                src={previewImage}
+                alt="Preview"
+                className="max-h-[75vh] w-auto max-w-full rounded-2xl object-contain shadow-2xl border border-slate-800"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
           </div>
         )}
       </div>

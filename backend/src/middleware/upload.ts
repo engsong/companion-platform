@@ -24,3 +24,4 @@ export const uploadAvatar = multer({ storage: createStorage('avatars') });
 export const uploadKyc = multer({ storage: createStorage('kyc') });
 export const uploadPostMedia = multer({ storage: createStorage('posts') });
 export const uploadSlip = multer({ storage: createStorage('slips') });
+export const uploadChatMedia = multer({ storage: createStorage('chat') });
