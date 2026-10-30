@@ -13,6 +13,7 @@ import bookingRoutes from './modules/bookings/bookings.routes';
 import paymentRoutes from './modules/payments/payments.routes';
 import chatRoutes from './modules/chat/chat.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import walletRoutes from './modules/wallet/wallet.routes';
 import { inspectMessageContent } from './middleware/chatFilter';
 import { prisma } from './config/prisma';
 
@@ -52,6 +53,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/wallet', walletRoutes);
 
 // Realtime WebSocket Chat
 io.on('connection', (socket) => {

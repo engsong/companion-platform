@@ -95,3 +95,18 @@ export interface ChatMsg {
   blockedReason?: string | null;
   createdAt: string;
 }
+
+export interface WalletTx {
+  id: string;
+  userId: string;
+  type: 'TOPUP' | 'WITHDRAW' | 'TRANSFER_OUT' | 'TRANSFER_IN';
+  amount: number;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
+  bankName?: string | null;
+  accountNumber?: string | null;
+  accountName?: string | null;
+  slipUrl?: string | null;
+  adminNote?: string | null;
+  targetUser?: { id: string; name: string; phone: string; avatar: string | null } | null;
+  createdAt: string;
+}

@@ -34,6 +34,9 @@ model User {
 
   sentMessages     ChatMessage[]  @relation("SentMessages")
   receivedMessages ChatMessage[]  @relation("ReceivedMessages")
+
+  walletTransactions WalletTransaction[] @relation("UserWalletTransactions")
+  receivedTransfers  WalletTransaction[] @relation("ReceivedTransfers")
 }
 
 model CompanionProfile {
@@ -163,4 +166,31 @@ model SystemSetting {
   key       String   @unique
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model WalletTransaction {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation("UserWalletTransactions", fields: [userId], references: [id], onDelete: Cascade)
+  
+  type          String    // TOPUP, WITHDRAW, TRANSFER_OUT, TRANSFER_IN
+  amount        Float
+  status        String    @default("PENDING") // PENDING, APPROVED, REJECTED, COMPLETED
+  
+  // Bank details for Top-up or Withdrawal
+  bankName      String?
+  accountNumber String?
+  accountName   String?
+  slipUrl       String?
+  
+  // QR Transfer details
+  targetUserId  String?
+  targetUser    User?     @relation("ReceivedTransfers", fields: [targetUserId], references: [id])
+  
+  adminNote     String?
+  reviewedAt    DateTime?
+  reviewedBy    String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }

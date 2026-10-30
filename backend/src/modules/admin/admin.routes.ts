@@ -260,4 +260,213 @@ router.post('/users/:userId/toggle-ban', async (req: AuthRequest, res: Response)
   }
 });
 
+// 9. Get Pending Wallet Top-ups
+router.get('/wallet/pending-topups', async (req: AuthRequest, res: Response) => {
+  try {
+    const pending = await prisma.walletTransaction.findMany({
+      where: { type: 'TOPUP', status: 'PENDING' },
+      include: {
+        user: { select: { id: true, name: true, phone: true, avatar: true, walletBalance: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ pendingTopups: pending });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch pending topups' });
+  }
+});
+
+// 10. Review Wallet Top-up (Approve & Deposit / Reject)
+router.post('/wallet/topup/:id/review', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { action, note } = req.body;
+
+    if (!['APPROVE', 'REJECT'].includes(action)) {
+      return res.status(400).json({ error: 'Action must be APPROVE or REJECT' });
+    }
+
+    const tx = await prisma.walletTransaction.findUnique({
+      where: { id },
+      include: { user: true }
+    });
+
+    if (!tx || tx.type !== 'TOPUP') {
+      return res.status(404).json({ error: 'Top-up transaction not found' });
+    }
+
+    if (tx.status !== 'PENDING') {
+      return res.status(400).json({ error: `Transaction is already ${tx.status}` });
+    }
+
+    let updatedTx: any;
+    let newBalance = tx.user.walletBalance;
+
+    if (action === 'APPROVE') {
+      const result = await prisma.$transaction(async (prismaTx) => {
+        const user = await prismaTx.user.update({
+          where: { id: tx.userId },
+          data: { walletBalance: { increment: tx.amount } }
+        });
+
+        const transaction = await prismaTx.walletTransaction.update({
+          where: { id },
+          data: {
+            status: 'APPROVED',
+            adminNote: note || null,
+            reviewedAt: new Date(),
+            reviewedBy: req.user!.id
+          }
+        });
+
+        return { user, transaction };
+      });
+
+      updatedTx = result.transaction;
+      newBalance = result.user.walletBalance;
+    } else {
+      updatedTx = await prisma.walletTransaction.update({
+        where: { id },
+        data: {
+          status: 'REJECTED',
+          adminNote: note || 'Top-up slip could not be verified',
+          reviewedAt: new Date(),
+          reviewedBy: req.user!.id
+        }
+      });
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${tx.userId}`).emit('wallet_updated', {
+        balance: newBalance,
+        status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        amount: tx.amount,
+        type: 'TOPUP'
+      });
+    }
+
+    res.json({
+      message: action === 'APPROVE' ? 'Deposit approved and balance credited!' : 'Top-up request rejected',
+      transaction: updatedTx
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to review top-up' });
+  }
+});
+
+// 11. Get Pending Wallet Withdrawals
+router.get('/wallet/pending-withdrawals', async (req: AuthRequest, res: Response) => {
+  try {
+    const pending = await prisma.walletTransaction.findMany({
+      where: { type: 'WITHDRAW', status: 'PENDING' },
+      include: {
+        user: { select: { id: true, name: true, phone: true, avatar: true, walletBalance: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ pendingWithdrawals: pending });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch pending withdrawals' });
+  }
+});
+
+// 12. Review Wallet Withdrawal (Approve & Complete / Reject & Refund)
+router.post('/wallet/withdraw/:id/review', async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { action, note, slipUrl } = req.body;
+
+    if (!['APPROVE', 'REJECT'].includes(action)) {
+      return res.status(400).json({ error: 'Action must be APPROVE or REJECT' });
+    }
+
+    const tx = await prisma.walletTransaction.findUnique({
+      where: { id },
+      include: { user: true }
+    });
+
+    if (!tx || tx.type !== 'WITHDRAW') {
+      return res.status(404).json({ error: 'Withdrawal transaction not found' });
+    }
+
+    if (tx.status !== 'PENDING') {
+      return res.status(400).json({ error: `Transaction is already ${tx.status}` });
+    }
+
+    let updatedTx: any;
+    let newBalance = tx.user.walletBalance;
+
+    if (action === 'APPROVE') {
+      updatedTx = await prisma.walletTransaction.update({
+        where: { id },
+        data: {
+          status: 'COMPLETED',
+          slipUrl: slipUrl || null,
+          adminNote: note || null,
+          reviewedAt: new Date(),
+          reviewedBy: req.user!.id
+        }
+      });
+    } else {
+      // Refund held balance back to user
+      const result = await prisma.$transaction(async (prismaTx) => {
+        const user = await prismaTx.user.update({
+          where: { id: tx.userId },
+          data: { walletBalance: { increment: tx.amount } }
+        });
+
+        const transaction = await prismaTx.walletTransaction.update({
+          where: { id },
+          data: {
+            status: 'REJECTED',
+            adminNote: note || 'Withdrawal rejected, balance refunded',
+            reviewedAt: new Date(),
+            reviewedBy: req.user!.id
+          }
+        });
+
+        return { user, transaction };
+      });
+
+      updatedTx = result.transaction;
+      newBalance = result.user.walletBalance;
+    }
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${tx.userId}`).emit('wallet_updated', {
+        balance: newBalance,
+        status: action === 'APPROVE' ? 'COMPLETED' : 'REJECTED',
+        amount: tx.amount,
+        type: 'WITHDRAW'
+      });
+    }
+
+    res.json({
+      message: action === 'APPROVE' ? 'Withdrawal marked as completed!' : 'Withdrawal rejected and balance refunded to user',
+      transaction: updatedTx
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to review withdrawal' });
+  }
+});
+
+// 13. Get All Wallet Transactions History
+router.get('/wallet/transactions', async (req: AuthRequest, res: Response) => {
+  try {
+    const transactions = await prisma.walletTransaction.findMany({
+      include: {
+        user: { select: { id: true, name: true, phone: true } },
+        targetUser: { select: { id: true, name: true, phone: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100
+    });
+    res.json({ transactions });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch wallet transactions' });
+  }
+});
+
 export default router;

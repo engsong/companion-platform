@@ -83,3 +83,32 @@ export interface SystemSettings {
   COMPANY_QR_IMAGE?: string;
   [key: string]: string | undefined;
 }
+
+export interface WalletTransactionItem {
+  id: string;
+  userId: string;
+  type: 'TOPUP' | 'WITHDRAW' | 'TRANSFER_OUT' | 'TRANSFER_IN';
+  amount: number;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED';
+  bankName: string | null;
+  accountNumber: string | null;
+  accountName: string | null;
+  slipUrl: string | null;
+  targetUserId: string | null;
+  adminNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: {
+    id: string;
+    name: string;
+    phone: string;
+    avatar?: string | null;
+    walletBalance?: number;
+  };
+  targetUser?: {
+    id: string;
+    name: string;
+    phone: string;
+  } | null;
+}
+

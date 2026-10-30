@@ -28,9 +28,14 @@ import {
   Volume2,
   FileText,
   Camera,
-  Navigation
+  Navigation,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ArrowRightLeft,
+  Copy,
+  Check
 } from 'lucide-react';
-import { User, CompanionCard, PostItem, Booking, ChatMsg } from './types';
+import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx } from './types';
 
 export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem('mobile_token') || '');
@@ -71,6 +76,28 @@ export default function App() {
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<any>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  // In-App Wallet states & modals
+  const [walletTransactions, setWalletTransactions] = useState<WalletTx[]>([]);
+  const [topupModal, setTopupModal] = useState(false);
+  const [topupAmount, setTopupAmount] = useState('500000');
+  const [topupSlipFile, setTopupSlipFile] = useState<File | null>(null);
+  const [topupLoading, setTopupLoading] = useState(false);
+  const [topupInstructions, setTopupInstructions] = useState<any>(null);
+
+  const [transferModal, setTransferModal] = useState(false);
+  const [transferTab, setTransferTab] = useState<'send' | 'myqr'>('send');
+  const [transferTarget, setTransferTarget] = useState('');
+  const [transferAmount, setTransferAmount] = useState('200000');
+  const [transferLoading, setTransferLoading] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+
+  const [withdrawModal, setWithdrawModal] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('500000');
+  const [withdrawBank, setWithdrawBank] = useState('Banque Pour Le Commerce Exterieur Lao (BCEL)');
+  const [withdrawAccountNo, setWithdrawAccountNo] = useState('');
+  const [withdrawAccountName, setWithdrawAccountName] = useState('');
+  const [withdrawLoading, setWithdrawLoading] = useState(false);
 
   // Booking Offer modal
   const [offerModal, setOfferModal] = useState(false);
@@ -239,6 +266,35 @@ export default function App() {
     if (token) loadMyBookings();
   }, [token, activeTab]);
 
+  // Load Wallet Info
+  const loadWalletInfo = async () => {
+    if (!token) return;
+    try {
+      const data = await authFetch('/api/wallet/me');
+      if (data.balance !== undefined) {
+        setCurrentUser((prev) => (prev ? { ...prev, walletBalance: data.balance } : null));
+        setWalletTransactions(data.transactions || []);
+      }
+    } catch (e) {
+      console.error('Failed to load wallet:', e);
+    }
+  };
+
+  const loadTopupInstructions = async () => {
+    try {
+      const data = await authFetch('/api/wallet/instructions');
+      setTopupInstructions(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    if (token && activeTab === 'profile') {
+      loadWalletInfo();
+    }
+  }, [token, activeTab]);
+
   // Socket.io connection & chat loading
   useEffect(() => {
     if (!currentUser) return;
@@ -261,6 +317,20 @@ export default function App() {
         setTimeout(() => setSecurityWarning(null), 5000);
       }
       setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    });
+
+    socket.on('wallet_updated', (data: any) => {
+      loadWalletInfo();
+      if (data?.type === 'TRANSFER_IN') {
+        setSecurityWarning(`🎉 You received a real-time transfer of ${data.amount?.toLocaleString()} LAK from ${data.fromName || 'another user'}!`);
+        setTimeout(() => setSecurityWarning(null), 8000);
+      } else if (data?.status === 'APPROVED' && data?.type === 'TOPUP') {
+        setSecurityWarning(`✅ Your wallet top-up of ${data.amount?.toLocaleString()} LAK has been approved by Admin!`);
+        setTimeout(() => setSecurityWarning(null), 8000);
+      } else if (data?.status === 'COMPLETED' && data?.type === 'WITHDRAW') {
+        setSecurityWarning(`✅ Your withdrawal of ${data.amount?.toLocaleString()} LAK has been completed and sent to your bank!`);
+        setTimeout(() => setSecurityWarning(null), 8000);
+      }
     });
 
     return () => {
@@ -627,6 +697,127 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Submit Top-up Slip
+  const handleTopupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!topupSlipFile) {
+      alert('Please select and attach your payment transfer slip.');
+      return;
+    }
+    setTopupLoading(true);
+    const formData = new FormData();
+    formData.append('amount', topupAmount);
+    formData.append('bankName', 'BCEL One');
+    formData.append('slip', topupSlipFile);
+
+    try {
+      const res = await fetch('/api/wallet/topup', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit top-up');
+      alert('✅ Top-up slip submitted! Admin will verify and deposit funds within 1-3 minutes.');
+      setTopupModal(false);
+      setTopupSlipFile(null);
+      loadWalletInfo();
+    } catch (err: any) {
+      alert(err.message || 'Error submitting top-up');
+    } finally {
+      setTopupLoading(false);
+    }
+  };
+
+  // Submit Real-time Wallet Transfer
+  const handleTransferSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferTarget.trim()) {
+      alert('Please enter recipient phone number or wallet identifier.');
+      return;
+    }
+    const num = parseFloat(transferAmount);
+    if (isNaN(num) || num <= 0) {
+      alert('Please enter a valid transfer amount.');
+      return;
+    }
+    if ((currentUser?.walletBalance || 0) < num) {
+      alert(`Insufficient balance. You have ${currentUser?.walletBalance.toLocaleString()} LAK available.`);
+      return;
+    }
+
+    setTransferLoading(true);
+    try {
+      const res = await fetch('/api/wallet/transfer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          targetIdentifier: transferTarget.trim(),
+          amount: num,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Transfer failed');
+      alert(`🎉 ${data.message}`);
+      setTransferModal(false);
+      setTransferTarget('');
+      loadWalletInfo();
+    } catch (err: any) {
+      alert(err.message || 'Error processing transfer');
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  // Submit Withdrawal Request
+  const handleWithdrawSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const num = parseFloat(withdrawAmount);
+    if (isNaN(num) || num <= 0) {
+      alert('Please enter a valid withdrawal amount.');
+      return;
+    }
+    if ((currentUser?.walletBalance || 0) < num) {
+      alert(`Insufficient balance. You have ${currentUser?.walletBalance.toLocaleString()} LAK available.`);
+      return;
+    }
+    if (!withdrawAccountNo.trim() || !withdrawAccountName.trim()) {
+      alert('Please fill in bank account number and account name.');
+      return;
+    }
+
+    setWithdrawLoading(true);
+    try {
+      const res = await fetch('/api/wallet/withdraw', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          amount: num,
+          bankName: withdrawBank,
+          accountNumber: withdrawAccountNo.trim(),
+          accountName: withdrawAccountName.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Withdrawal request failed');
+      alert('✅ Withdrawal request submitted! Admin will transfer funds to your bank account.');
+      setWithdrawModal(false);
+      setWithdrawAccountNo('');
+      setWithdrawAccountName('');
+      loadWalletInfo();
+    } catch (err: any) {
+      alert(err.message || 'Error submitting withdrawal');
+    } finally {
+      setWithdrawLoading(false);
     }
   };
 
@@ -1640,6 +1831,111 @@ export default function App() {
                     <CreditCard className="w-5 h-5" />
                   </div>
                 </div>
+
+                {/* 3 Wallet Action Buttons */}
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => {
+                      loadTopupInstructions();
+                      setTopupModal(true);
+                    }}
+                    className="p-3 bg-gradient-to-br from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-xl shadow-lg shadow-emerald-600/20 flex flex-col items-center justify-center gap-1.5 transition-all group"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <ArrowDownLeft className="w-4 h-4" />
+                    </div>
+                    <span className="text-[11px] font-bold">Top-Up</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTransferModal(true);
+                    }}
+                    className="p-3 bg-gradient-to-br from-purple-600 to-indigo-700 hover:from-purple-500 hover:to-indigo-600 text-white rounded-xl shadow-lg shadow-purple-600/20 flex flex-col items-center justify-center gap-1.5 transition-all group"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <ArrowRightLeft className="w-4 h-4" />
+                    </div>
+                    <span className="text-[11px] font-bold">QR Transfer</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setWithdrawModal(true);
+                    }}
+                    className="p-3 bg-gradient-to-br from-amber-600 to-orange-700 hover:from-amber-500 hover:to-orange-600 text-white rounded-xl shadow-lg shadow-amber-600/20 flex flex-col items-center justify-center gap-1.5 transition-all group"
+                  >
+                    <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <ArrowUpRight className="w-4 h-4" />
+                    </div>
+                    <span className="text-[11px] font-bold">Withdraw</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Wallet Transaction History List */}
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+                <div className="flex justify-between items-center">
+                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-rose-400" />
+                    <span>Recent Wallet Activity</span>
+                  </h4>
+                  <button
+                    onClick={loadWalletInfo}
+                    className="text-[10px] text-slate-400 hover:text-white"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {walletTransactions.length === 0 ? (
+                  <p className="text-xs text-slate-500 py-2 text-center">No wallet transactions yet</p>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto no-scrollbar">
+                    {walletTransactions.map((tx) => {
+                      const isPositive = tx.type === 'TOPUP' || tx.type === 'TRANSFER_IN';
+                      return (
+                        <div key={tx.id} className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                              tx.type === 'TOPUP' ? 'bg-emerald-500/20 text-emerald-400' :
+                              tx.type === 'WITHDRAW' ? 'bg-amber-500/20 text-amber-400' :
+                              tx.type === 'TRANSFER_IN' ? 'bg-indigo-500/20 text-indigo-400' :
+                              'bg-rose-500/20 text-rose-400'
+                            }`}>
+                              {tx.type === 'TOPUP' ? <ArrowDownLeft className="w-3.5 h-3.5" /> :
+                               tx.type === 'WITHDRAW' ? <ArrowUpRight className="w-3.5 h-3.5" /> :
+                               <ArrowRightLeft className="w-3.5 h-3.5" />}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-white">
+                                {tx.type === 'TOPUP' ? 'Wallet Top-Up' :
+                                 tx.type === 'WITHDRAW' ? `Withdraw (${tx.bankName || 'Bank'})` :
+                                 tx.type === 'TRANSFER_IN' ? `Received from ${tx.accountName || 'User'}` :
+                                 `Sent to ${tx.accountName || 'User'}`}
+                              </div>
+                              <div className="text-[10px] text-slate-500">
+                                {new Date(tx.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className={`font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {isPositive ? '+' : '-'}{tx.amount.toLocaleString()} LAK
+                            </div>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold ${
+                              tx.status === 'APPROVED' || tx.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300' :
+                              tx.status === 'PENDING' ? 'bg-amber-500/20 text-amber-300' :
+                              'bg-rose-500/20 text-rose-300'
+                            }`}>
+                              {tx.status}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Companion KYC Submission Trigger */}
@@ -2139,7 +2435,356 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* MODAL 8: IN-APP WALLET TOP-UP */}
+        {topupModal && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl my-auto">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl">
+                    <ArrowDownLeft className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Top-Up Wallet</h3>
+                    <p className="text-[10px] text-slate-400">ເຕີມເງິນເຂົ້າກະເປົາຜ່ານ BCEL One / QR</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setTopupModal(false)}>
+                  <X className="w-5 h-5 text-slate-400 hover:text-white" />
+                </button>
+              </div>
+
+              {/* Bank Transfer Instructions */}
+              <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2 text-xs">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400">Bank:</span>
+                  <span className="font-bold text-white">BCEL One / LAPNet</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400">Account No:</span>
+                  <span className="font-mono font-bold text-emerald-400">010-12-00-01234567-001</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400">Account Name:</span>
+                  <span className="font-semibold text-white">COMPANION PLATFORM CO., LTD</span>
+                </div>
+              </div>
+
+              {/* QR Code for Top-up */}
+              <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl shadow-inner">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=LAO_QR_TOPUP_${currentUser?.phone || 'WALLET'}_${topupAmount}`}
+                  alt="Top-up Bank QR"
+                  className="w-40 h-40 object-contain"
+                />
+                <span className="text-[10px] text-slate-700 font-semibold mt-1">
+                  Scan to transfer {Number(topupAmount || 0).toLocaleString()} LAK
+                </span>
+              </div>
+
+              <form onSubmit={handleTopupSubmit} className="space-y-3">
+                {/* Quick Amount Selector */}
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1.5">Select Amount (LAK)</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {['200000', '500000', '1000000', '2000000', '5000000'].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setTopupAmount(amt)}
+                        className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-colors ${
+                          topupAmount === amt
+                            ? 'bg-emerald-600 border-emerald-500 text-white'
+                            : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        {(Number(amt) / 1000).toLocaleString()}k
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Custom Amount input */}
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">Custom Amount (LAK)</label>
+                  <input
+                    type="number"
+                    min="10000"
+                    step="5000"
+                    value={topupAmount}
+                    onChange={(e) => setTopupAmount(e.target.value)}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                {/* Upload Slip */}
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">
+                    Upload Bank Transfer Slip (ໃບໂອນເງິນ) *
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    required
+                    onChange={(e) => setTopupSlipFile(e.target.files?.[0] || null)}
+                    className="w-full text-slate-300 text-[11px] file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-[11px] file:bg-slate-800 file:text-emerald-400 hover:file:bg-slate-700"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={topupLoading || !topupSlipFile}
+                  className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>{topupLoading ? 'Submitting Slip...' : 'Submit Slip for Admin Review'}</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 9: REAL-TIME WALLET TRANSFER (SEND / RECEIVE QR) */}
+        {transferModal && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-500/10 text-blue-400 rounded-xl">
+                    <ArrowRightLeft className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Wallet Transfer</h3>
+                    <p className="text-[10px] text-slate-400">ໂອນເງິນ / ຮັບເງິນ Realtime ດ້ວຍ QR</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setTransferModal(false)}>
+                  <X className="w-5 h-5 text-slate-400 hover:text-white" />
+                </button>
+              </div>
+
+              {/* Sub-tabs: Send vs My QR */}
+              <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setTransferTab('send')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    transferTab === 'send'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Send Money (ໂອນເງິນ)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransferTab('myqr')}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    transferTab === 'myqr'
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Receive / My QR (ຮັບເງິນ)
+                </button>
+              </div>
+
+              {transferTab === 'send' ? (
+                <form onSubmit={handleTransferSubmit} className="space-y-3">
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                    <span className="text-slate-400">Your Balance:</span>
+                    <span className="font-bold text-white">{(currentUser?.walletBalance || 0).toLocaleString()} LAK</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-400 font-semibold mb-1">
+                      Recipient Phone or Wallet ID
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 02088888888 or paste QR payload"
+                      value={transferTarget}
+                      onChange={(e) => setTransferTarget(e.target.value)}
+                      required
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-slate-400 font-semibold mb-1">Amount (LAK)</label>
+                    <input
+                      type="number"
+                      min="1000"
+                      step="1000"
+                      value={transferAmount}
+                      onChange={(e) => setTransferAmount(e.target.value)}
+                      required
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="flex gap-1.5">
+                    {['50000', '100000', '200000', '500000'].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setTransferAmount(amt)}
+                        className="flex-1 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-[10px] font-bold text-slate-300"
+                      >
+                        {(Number(amt) / 1000).toLocaleString()}k
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={transferLoading || !transferTarget.trim() || Number(transferAmount) <= 0}
+                    className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>{transferLoading ? 'Transferring...' : 'Transfer Now (Real-time)'}</span>
+                  </button>
+                </form>
+              ) : (
+                /* My Wallet QR Code */
+                <div className="space-y-3 flex flex-col items-center text-center">
+                  <div className="p-3 bg-white rounded-2xl shadow-xl flex flex-col items-center">
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=WALLET:${currentUser?.id}:${currentUser?.phone}`}
+                      alt="My Wallet QR"
+                      className="w-44 h-44 object-contain"
+                    />
+                    <span className="text-[10px] text-slate-700 font-bold mt-1">
+                      {currentUser?.name || 'Companion User'}
+                    </span>
+                  </div>
+
+                  <div className="w-full p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-mono text-[11px] truncate">
+                      {currentUser?.phone}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(currentUser?.phone || '');
+                        setCopiedId(true);
+                        setTimeout(() => setCopiedId(false), 2000);
+                      }}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1"
+                    >
+                      {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedId ? 'Copied' : 'Copy Phone'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Share your QR or Phone number for instant peer-to-peer wallet transfers.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 10: IN-APP WALLET WITHDRAWAL */}
+        {withdrawModal && (
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl my-auto">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl">
+                    <ArrowUpRight className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Withdraw Funds</h3>
+                    <p className="text-[10px] text-slate-400">ຖອນເງິນອອກເຂົ້າບັນຊີທະນາຄານ</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setWithdrawModal(false)}>
+                  <X className="w-5 h-5 text-slate-400 hover:text-white" />
+                </button>
+              </div>
+
+              <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                <span className="text-slate-400">Available to Withdraw:</span>
+                <span className="font-bold text-amber-400">{(currentUser?.walletBalance || 0).toLocaleString()} LAK</span>
+              </div>
+
+              <form onSubmit={handleWithdrawSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">Withdrawal Amount (LAK)</label>
+                  <input
+                    type="number"
+                    min="50000"
+                    step="10000"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">Receiving Bank (ທະນາຄານ)</label>
+                  <select
+                    value={withdrawBank}
+                    onChange={(e) => setWithdrawBank(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="Banque Pour Le Commerce Exterieur Lao (BCEL)">BCEL (Banque Pour Le Commerce Exterieur Lao)</option>
+                    <option value="Joint Development Bank (JDB)">JDB (Joint Development Bank)</option>
+                    <option value="Lao Development Bank (LDB)">LDB (Lao Development Bank)</option>
+                    <option value="Agricultural Promotion Bank (APB)">APB (Agricultural Promotion Bank)</option>
+                    <option value="Phongsavanh Bank">Phongsavanh Bank</option>
+                    <option value="Maruhan Japan Bank Lao">Maruhan Japan Bank Lao</option>
+                    <option value="Kasikorn Bank Lao">Kasikorn Bank Lao</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">Bank Account Number (ເລກບັນຊີ)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 010-12-00-01234567-001"
+                    value={withdrawAccountNo}
+                    onChange={(e) => setWithdrawAccountNo(e.target.value)}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 font-semibold mb-1">Account Holder Full Name (ຊື່ເຈົ້າຂອງບັນຊີ)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. SOMCHAY SAYASITH"
+                    value={withdrawAccountName}
+                    onChange={(e) => setWithdrawAccountName(e.target.value)}
+                    required
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500 uppercase"
+                  />
+                </div>
+
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-[10px] text-amber-300">
+                  ⚠️ Admin will verify and transfer funds to your bank account within 5-15 minutes. The requested amount is held in escrow immediately.
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={withdrawLoading || Number(withdrawAmount) <= 0 || !withdrawAccountNo.trim() || !withdrawAccountName.trim()}
+                  className="w-full py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-600/20"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>{withdrawLoading ? 'Submitting Request...' : 'Request Withdrawal (ຖອນເງິນ)'}</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+

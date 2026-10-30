@@ -16,9 +16,14 @@ import {
   Sparkles,
   Search,
   ExternalLink,
-  DollarSign
+  DollarSign,
+  Wallet,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ArrowRightLeft,
+  CreditCard
 } from 'lucide-react';
-import { AdminStats, KycApplicant, PaymentSlipItem, BookingRecord, SystemSettings } from './types';
+import { AdminStats, KycApplicant, PaymentSlipItem, BookingRecord, SystemSettings, WalletTransactionItem } from './types';
 
 export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem('admin_token') || '');
@@ -26,7 +31,7 @@ export default function App() {
   const [password, setPassword] = useState('admin123');
   const [loginError, setLoginError] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'kyc' | 'slips' | 'bookings' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'kyc' | 'slips' | 'bookings' | 'settings' | 'wallet'>('dashboard');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [pendingKyc, setPendingKyc] = useState<KycApplicant[]>([]);
   const [pendingSlips, setPendingSlips] = useState<PaymentSlipItem[]>([]);
@@ -35,9 +40,15 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
+  // In-app Wallet Management states
+  const [pendingTopups, setPendingTopups] = useState<WalletTransactionItem[]>([]);
+  const [pendingWithdrawals, setPendingWithdrawals] = useState<WalletTransactionItem[]>([]);
+  const [walletHistory, setWalletHistory] = useState<WalletTransactionItem[]>([]);
+  const [walletSubTab, setWalletSubTab] = useState<'topups' | 'withdrawals' | 'history'>('topups');
+
   // Rejection modal
   const [rejectModal, setRejectModal] = useState<{
-    type: 'kyc' | 'slip';
+    type: 'kyc' | 'slip' | 'topup' | 'withdraw';
     id: string;
     targetName: string;
   } | null>(null);
@@ -70,18 +81,34 @@ export default function App() {
     if (!token) return;
     setLoading(true);
     try {
-      const [statsData, kycData, slipsData, bookingsData, settingsData] = await Promise.all([
+      const [
+        statsData,
+        kycData,
+        slipsData,
+        bookingsData,
+        settingsData,
+        topupsData,
+        withdrawalsData,
+        historyData,
+      ] = await Promise.all([
         fetchWithAuth('/api/admin/stats'),
         fetchWithAuth('/api/admin/kyc/pending'),
         fetchWithAuth('/api/admin/slips/pending'),
         fetchWithAuth('/api/admin/bookings'),
         fetchWithAuth('/api/admin/settings'),
+        fetchWithAuth('/api/admin/wallet/pending-topups'),
+        fetchWithAuth('/api/admin/wallet/pending-withdrawals'),
+        fetchWithAuth('/api/admin/wallet/transactions'),
       ]);
 
       setStats(statsData);
       setPendingKyc(kycData.pending || []);
       setPendingSlips(slipsData.pendingSlips || []);
       setBookings(bookingsData.bookings || []);
+      setPendingTopups(topupsData.topups || []);
+      setPendingWithdrawals(withdrawalsData.withdrawals || []);
+      setWalletHistory(historyData.transactions || []);
+
       if (settingsData.settings) {
         setSettings(settingsData.settings);
         setFeePercent(settingsData.settings.PLATFORM_FEE_PERCENT || '15');
@@ -149,6 +176,34 @@ export default function App() {
         body: JSON.stringify({ action, adminNote: note }),
       });
       setActionSuccess(`Payment slip ${action.toLowerCase()}d. Booking escrow updated!`);
+      setTimeout(() => setActionSuccess(null), 3000);
+      loadData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleTopupReview = async (topupId: string, action: 'APPROVE' | 'REJECT', note?: string) => {
+    try {
+      await fetchWithAuth(`/api/admin/wallet/topup/${topupId}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ action, adminNote: note }),
+      });
+      setActionSuccess(`Wallet top-up ${action.toLowerCase()}d successfully! User balance updated.`);
+      setTimeout(() => setActionSuccess(null), 3000);
+      loadData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleWithdrawReview = async (withdrawId: string, action: 'APPROVE' | 'REJECT', note?: string) => {
+    try {
+      await fetchWithAuth(`/api/admin/wallet/withdraw/${withdrawId}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ action, adminNote: note }),
+      });
+      setActionSuccess(`Withdrawal payout ${action.toLowerCase()}d successfully!`);
       setTimeout(() => setActionSuccess(null), 3000);
       loadData();
     } catch (err) {
@@ -331,6 +386,25 @@ export default function App() {
           >
             <CalendarCheck className="w-4 h-4" />
             <span>Bookings & Escrow</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('wallet')}
+            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+              activeTab === 'wallet'
+                ? 'bg-rose-500 text-white shadow-lg shadow-rose-500/25'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Wallet className="w-4 h-4" />
+              <span>Wallet & Payouts</span>
+            </div>
+            {pendingTopups.length + pendingWithdrawals.length > 0 && (
+              <span className="px-2 py-0.5 text-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 rounded-full font-bold">
+                {pendingTopups.length + pendingWithdrawals.length}
+              </span>
+            )}
           </button>
 
           <button
@@ -916,6 +990,354 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* TAB 6: IN-APP WALLET & PAYOUTS */}
+          {activeTab === 'wallet' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-emerald-400" />
+                  <span>Wallet Operations & Payouts</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Review top-up deposit slips, approve bank withdrawals, and audit peer-to-peer wallet transfers.
+                </p>
+              </div>
+
+              {/* Sub-tab switcher */}
+              <div className="flex bg-slate-900 p-1.5 rounded-2xl border border-slate-800 gap-2">
+                <button
+                  onClick={() => setWalletSubTab('topups')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    walletSubTab === 'topups'
+                      ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/25'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <ArrowDownLeft className="w-4 h-4" />
+                  <span>Pending Top-ups</span>
+                  {pendingTopups.length > 0 && (
+                    <span className="px-2 py-0.5 bg-white/20 rounded-full text-[10px]">
+                      {pendingTopups.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setWalletSubTab('withdrawals')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    walletSubTab === 'withdrawals'
+                      ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/25'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <ArrowUpRight className="w-4 h-4" />
+                  <span>Pending Withdrawals</span>
+                  {pendingWithdrawals.length > 0 && (
+                    <span className="px-2 py-0.5 bg-white/20 rounded-full text-[10px]">
+                      {pendingWithdrawals.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setWalletSubTab('history')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    walletSubTab === 'history'
+                      ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <ArrowRightLeft className="w-4 h-4" />
+                  <span>Transaction Audit Log ({walletHistory.length})</span>
+                </button>
+              </div>
+
+              {/* SUBTAB 1: PENDING TOP-UPS */}
+              {walletSubTab === 'topups' && (
+                <div className="space-y-4">
+                  {pendingTopups.length === 0 ? (
+                    <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl">
+                      <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2 opacity-60" />
+                      <h4 className="text-sm font-bold text-white">All Top-Up Slips Verified</h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        There are no pending top-up requests waiting for admin approval.
+                      </p>
+                    </div>
+                  ) : (
+                    pendingTopups.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-5 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col md:flex-row gap-5 items-start justify-between"
+                      >
+                        <div className="flex gap-4 items-start">
+                          {/* Slip Preview Thumbnail */}
+                          <div
+                            className="w-28 h-36 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden cursor-pointer relative group shrink-0"
+                            onClick={() => item.slipUrl && setPreviewImage(item.slipUrl)}
+                          >
+                            {item.slipUrl ? (
+                              <>
+                                <img
+                                  src={item.slipUrl}
+                                  alt="Deposit slip"
+                                  className="w-full h-full object-cover"
+                                />
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-[10px] text-white gap-1">
+                                  <Eye className="w-3.5 h-3.5" /> View
+                                </div>
+                              </>
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                                No slip
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold rounded-lg flex items-center gap-1">
+                                <ArrowDownLeft className="w-3.5 h-3.5" />
+                                TOP-UP REQUEST
+                              </span>
+                              <span className="text-xs text-slate-400">
+                                {new Date(item.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div>
+                              <div className="text-lg font-black text-white">
+                                +{item.amount.toLocaleString()} <span className="text-xs font-normal text-slate-400">LAK</span>
+                              </div>
+                              <p className="text-xs text-slate-400">
+                                Deposited to: <strong className="text-slate-200">{item.bankName || 'BCEL One / LAPNet'}</strong>
+                              </p>
+                            </div>
+
+                            <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl space-y-1 text-xs">
+                              <div className="text-slate-300 font-semibold">{item.user.name}</div>
+                              <div className="text-slate-400 text-[11px]">Phone: {item.user.phone}</div>
+                              <div className="text-slate-400 text-[11px]">
+                                Current Wallet Balance: <span className="text-emerald-400 font-mono font-bold">{(item.user.walletBalance || 0).toLocaleString()} LAK</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Review Actions */}
+                        <div className="flex md:flex-col gap-2 w-full md:w-auto shrink-0">
+                          <button
+                            onClick={() => handleTopupReview(item.id, 'APPROVE')}
+                            className="flex-1 md:flex-initial px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-600/20 transition-all"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Approve & Credit Balance</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setRejectModal({ type: 'topup', id: item.id, targetName: item.user.name });
+                              setRejectReason('');
+                            }}
+                            className="flex-1 md:flex-initial px-4 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 rounded-xl text-xs font-bold border border-rose-500/30 flex items-center justify-center gap-1.5 transition-all"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>Reject Top-Up</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* SUBTAB 2: PENDING WITHDRAWALS */}
+              {walletSubTab === 'withdrawals' && (
+                <div className="space-y-4">
+                  {pendingWithdrawals.length === 0 ? (
+                    <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl">
+                      <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2 opacity-60" />
+                      <h4 className="text-sm font-bold text-white">All Withdrawal Payouts Completed</h4>
+                      <p className="text-xs text-slate-400 mt-1">
+                        There are no pending user bank payout requests.
+                      </p>
+                    </div>
+                  ) : (
+                    pendingWithdrawals.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-5 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col md:flex-row gap-5 items-start justify-between"
+                      >
+                        <div className="space-y-3 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold rounded-lg flex items-center gap-1">
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                              PAYOUT REQUEST
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {new Date(item.createdAt).toLocaleString()}
+                            </span>
+                          </div>
+
+                          <div>
+                            <div className="text-lg font-black text-amber-400">
+                              -{item.amount.toLocaleString()} <span className="text-xs font-normal text-slate-400">LAK</span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              User: <strong className="text-white">{item.user.name}</strong> ({item.user.phone})
+                            </p>
+                          </div>
+
+                          {/* Bank details card for Admin to do transfer */}
+                          <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1.5 text-xs">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400">Receiving Bank:</span>
+                              <span className="font-bold text-white">{item.bankName}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400">Account Number:</span>
+                              <span className="font-mono font-bold text-emerald-400 text-sm select-all">
+                                {item.accountNumber}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400">Beneficiary Name:</span>
+                              <span className="font-bold text-white uppercase select-all">
+                                {item.accountName}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Payout Action buttons */}
+                        <div className="flex md:flex-col gap-2 w-full md:w-auto shrink-0">
+                          <button
+                            onClick={() => handleWithdrawReview(item.id, 'APPROVE')}
+                            className="flex-1 md:flex-initial px-4 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-amber-600/20 transition-all"
+                          >
+                            <CreditCard className="w-4 h-4" />
+                            <span>Mark as Paid Out</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setRejectModal({ type: 'withdraw', id: item.id, targetName: item.user.name });
+                              setRejectReason('');
+                            }}
+                            className="flex-1 md:flex-initial px-4 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 rounded-xl text-xs font-bold border border-rose-500/30 flex items-center justify-center gap-1.5 transition-all"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>Reject & Refund</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* SUBTAB 3: TRANSACTION AUDIT LOG */}
+              {walletSubTab === 'history' && (
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                        <tr>
+                          <th className="p-3.5">Date & Time</th>
+                          <th className="p-3.5">Type</th>
+                          <th className="p-3.5">User</th>
+                          <th className="p-3.5">Counterparty / Details</th>
+                          <th className="p-3.5">Amount</th>
+                          <th className="p-3.5">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {walletHistory.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-6 text-center text-slate-500">
+                              No wallet transactions recorded yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          walletHistory.map((tx) => (
+                            <tr key={tx.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="p-3.5 text-slate-400 whitespace-nowrap">
+                                {new Date(tx.createdAt).toLocaleDateString()}{' '}
+                                <span className="text-[10px] text-slate-500">
+                                  {new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </td>
+                              <td className="p-3.5 whitespace-nowrap">
+                                <span
+                                  className={`px-2 py-0.5 rounded-md font-bold text-[10px] ${
+                                    tx.type === 'TOPUP'
+                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                      : tx.type === 'WITHDRAW'
+                                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                      : tx.type === 'TRANSFER_IN'
+                                      ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                      : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  }`}
+                                >
+                                  {tx.type}
+                                </span>
+                              </td>
+                              <td className="p-3.5 whitespace-nowrap">
+                                <span className="font-semibold text-white">{tx.user.name}</span>
+                                <div className="text-[10px] text-slate-400">{tx.user.phone}</div>
+                              </td>
+                              <td className="p-3.5 text-slate-300">
+                                {tx.targetUser ? (
+                                  <div>
+                                    <span className="font-medium text-slate-200">{tx.targetUser.name}</span>
+                                    <span className="text-[10px] text-slate-500 ml-1">({tx.targetUser.phone})</span>
+                                  </div>
+                                ) : tx.bankName ? (
+                                  <div>
+                                    <span className="text-slate-200">{tx.bankName}</span>
+                                    {tx.accountNumber && (
+                                      <span className="font-mono text-[10px] text-slate-400 ml-1">
+                                        • {tx.accountNumber}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-500">-</span>
+                                )}
+                              </td>
+                              <td className="p-3.5 font-bold font-mono whitespace-nowrap">
+                                <span
+                                  className={
+                                    tx.type === 'TOPUP' || tx.type === 'TRANSFER_IN'
+                                      ? 'text-emerald-400'
+                                      : 'text-rose-400'
+                                  }
+                                >
+                                  {tx.type === 'TOPUP' || tx.type === 'TRANSFER_IN' ? '+' : '-'}
+                                  {tx.amount.toLocaleString()} LAK
+                                </span>
+                              </td>
+                              <td className="p-3.5 whitespace-nowrap">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    tx.status === 'APPROVED' || tx.status === 'COMPLETED'
+                                      ? 'bg-emerald-500/10 text-emerald-400'
+                                      : tx.status === 'PENDING'
+                                      ? 'bg-amber-500/10 text-amber-300'
+                                      : 'bg-rose-500/10 text-rose-400'
+                                  }`}
+                                >
+                                  {tx.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </main>
 
@@ -924,7 +1346,15 @@ export default function App() {
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 w-full max-w-md space-y-4">
             <h4 className="text-base font-bold text-white">
-              Reject {rejectModal.type === 'kyc' ? 'KYC Application' : 'Payment Slip'}
+              Reject {
+                rejectModal.type === 'kyc'
+                  ? 'KYC Application'
+                  : rejectModal.type === 'slip'
+                  ? 'Booking Payment Slip'
+                  : rejectModal.type === 'topup'
+                  ? 'Top-Up Request'
+                  : 'Withdrawal Request'
+              }
             </h4>
             <p className="text-xs text-slate-400">
               Target: <strong className="text-white">{rejectModal.targetName}</strong>. Specify a rejection reason to notify the user.
@@ -932,7 +1362,7 @@ export default function App() {
             <textarea
               value={rejectReason}
               onChange={(e) => setRejectReason(e.target.value)}
-              placeholder="e.g. ID photo is blurry / Transfer amount does not match booking total"
+              placeholder="e.g. Invalid transfer slip / Incorrect bank account details..."
               className="w-full h-24 bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-rose-500"
             />
             <div className="flex justify-end gap-2">
@@ -946,8 +1376,12 @@ export default function App() {
                 onClick={() => {
                   if (rejectModal.type === 'kyc') {
                     handleKycReview(rejectModal.id, 'REJECT', rejectReason);
-                  } else {
+                  } else if (rejectModal.type === 'slip') {
                     handleSlipReview(rejectModal.id, 'REJECT', rejectReason);
+                  } else if (rejectModal.type === 'topup') {
+                    handleTopupReview(rejectModal.id, 'REJECT', rejectReason);
+                  } else if (rejectModal.type === 'withdraw') {
+                    handleWithdrawReview(rejectModal.id, 'REJECT', rejectReason);
                   }
                   setRejectModal(null);
                 }}
