@@ -33,9 +33,14 @@ import {
   ArrowUpRight,
   ArrowRightLeft,
   Copy,
-  Check
+  Check,
+  Download,
+  ScanLine,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
-import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx } from './types';
+import jsQR from 'jsqr';
+import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip } from './types';
 
 export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem('mobile_token') || '');
@@ -87,10 +92,23 @@ export default function App() {
 
   const [transferModal, setTransferModal] = useState(false);
   const [transferTab, setTransferTab] = useState<'send' | 'myqr'>('send');
+  const [transferStep, setTransferStep] = useState<'scan' | 'amount'>('scan');
   const [transferTarget, setTransferTarget] = useState('');
   const [transferAmount, setTransferAmount] = useState('200000');
+  const [transferNote, setTransferNote] = useState('');
+  const [recipientInfo, setRecipientInfo] = useState<WalletRecipient | null>(null);
+  const [inquiryLoading, setInquiryLoading] = useState(false);
+  const [inquiryError, setInquiryError] = useState<string | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
+  const [isScanningCamera, setIsScanningCamera] = useState(false);
+  const [eslipModal, setEslipModal] = useState<WalletTransferEslip | null>(null);
   const [copiedId, setCopiedId] = useState(false);
+  const [eslipSavedToast, setEslipSavedToast] = useState(false);
+
+  const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
+  const scannerStreamRef = useRef<MediaStream | null>(null);
+  const scannerAnimRef = useRef<number | null>(null);
+  const qrFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState('500000');
@@ -732,11 +750,133 @@ export default function App() {
     }
   };
 
+  // Camera scanner handlers
+  const startCameraScanner = async () => {
+    setInquiryError(null);
+    setIsScanningCamera(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      });
+      scannerStreamRef.current = stream;
+      if (scannerVideoRef.current) {
+        scannerVideoRef.current.srcObject = stream;
+        scannerVideoRef.current.setAttribute('playsinline', 'true');
+        await scannerVideoRef.current.play();
+        scannerAnimRef.current = requestAnimationFrame(tickScanner);
+      }
+    } catch (err: any) {
+      console.error('Camera access failed:', err);
+      setIsScanningCamera(false);
+      setInquiryError('Camera permission required to scan QR code. You can upload a QR image or enter phone number.');
+    }
+  };
+
+  const stopCameraScanner = () => {
+    if (scannerStreamRef.current) {
+      scannerStreamRef.current.getTracks().forEach((track) => track.stop());
+      scannerStreamRef.current = null;
+    }
+    if (scannerAnimRef.current) {
+      cancelAnimationFrame(scannerAnimRef.current);
+      scannerAnimRef.current = null;
+    }
+    setIsScanningCamera(false);
+  };
+
+  const tickScanner = () => {
+    if (!scannerVideoRef.current || scannerVideoRef.current.readyState !== scannerVideoRef.current.HAVE_ENOUGH_DATA) {
+      scannerAnimRef.current = requestAnimationFrame(tickScanner);
+      return;
+    }
+
+    const video = scannerVideoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      });
+      if (code && code.data) {
+        stopCameraScanner();
+        handleSendInquiry(code.data);
+        return;
+      }
+    }
+    scannerAnimRef.current = requestAnimationFrame(tickScanner);
+  };
+
+  // QR Image File upload scanner
+  const handleQrImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setInquiryError(null);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          if (code && code.data) {
+            handleSendInquiry(code.data);
+          } else {
+            setInquiryError('No valid QR code found in selected image. Please try another image.');
+          }
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+    if (qrFileInputRef.current) qrFileInputRef.current.value = '';
+  };
+
+  // Send Inquiry to verify recipient
+  const handleSendInquiry = async (targetPayload: string) => {
+    const clean = targetPayload.trim();
+    if (!clean) {
+      setInquiryError('Please enter recipient phone number or scan QR code');
+      return;
+    }
+    setInquiryLoading(true);
+    setInquiryError(null);
+    try {
+      const res = await fetch('/api/wallet/inquiry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ targetIdentifier: clean }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Recipient not found');
+
+      setRecipientInfo(data.recipient);
+      setTransferTarget(data.recipient.phone);
+      setTransferStep('amount');
+    } catch (err: any) {
+      setInquiryError(err.message || 'Error finding recipient wallet');
+    } finally {
+      setInquiryLoading(false);
+    }
+  };
+
   // Submit Real-time Wallet Transfer
   const handleTransferSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!transferTarget.trim()) {
-      alert('Please enter recipient phone number or wallet identifier.');
+    if (!recipientInfo) {
+      alert('Recipient information missing. Please scan QR or verify phone.');
       return;
     }
     const num = parseFloat(transferAmount);
@@ -745,7 +885,7 @@ export default function App() {
       return;
     }
     if ((currentUser?.walletBalance || 0) < num) {
-      alert(`Insufficient balance. You have ${currentUser?.walletBalance.toLocaleString()} LAK available.`);
+      alert(`Insufficient balance. You have ${(currentUser?.walletBalance || 0).toLocaleString()} LAK available.`);
       return;
     }
 
@@ -758,15 +898,26 @@ export default function App() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          targetIdentifier: transferTarget.trim(),
+          targetIdentifier: recipientInfo.phone || recipientInfo.id,
           amount: num,
+          note: transferNote,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Transfer failed');
-      alert(`🎉 ${data.message}`);
+
+      // Success: open e-slip!
+      if (data.eslip) {
+        setEslipModal(data.eslip);
+      }
       setTransferModal(false);
+      setTransferStep('scan');
+      setRecipientInfo(null);
       setTransferTarget('');
+      setTransferNote('');
+      if (currentUser) {
+        setCurrentUser({ ...currentUser, walletBalance: data.balance });
+      }
       loadWalletInfo();
     } catch (err: any) {
       alert(err.message || 'Error processing transfer');
@@ -774,6 +925,120 @@ export default function App() {
       setTransferLoading(false);
     }
   };
+
+  // Generate & Save e-Slip as PNG Image into Phone Gallery
+  const handleSaveEslip = (eslip: WalletTransferEslip) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 650;
+    canvas.height = 920;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Background
+    ctx.fillStyle = '#090d16';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Decorative Card Border
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(16, 16, canvas.width - 32, canvas.height - 32);
+
+    // Header gradient
+    const grad = ctx.createLinearGradient(0, 0, canvas.width, 180);
+    grad.addColorStop(0, '#e11d48');
+    grad.addColorStop(1, '#f59e0b');
+    ctx.fillStyle = grad;
+    ctx.fillRect(20, 20, canvas.width - 40, 160);
+
+    // App title
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('COMPANION PLATFORM', canvas.width / 2, 75);
+
+    ctx.font = '15px sans-serif';
+    ctx.fillStyle = '#fecdd3';
+    ctx.fillText('REAL-TIME WALLET TRANSFER E-SLIP (ໃບຮັບເງິນ)', canvas.width / 2, 110);
+
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillStyle = '#10b981';
+    ctx.fillText('✓ TRANSFER SUCCESSFUL (ໂອນເງິນສຳເລັດ)', canvas.width / 2, 150);
+
+    // Amount Box
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(50, 210, canvas.width - 100, 110);
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(50, 210, canvas.width - 100, 110);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('TRANSFER AMOUNT (ຈຳນວນເງິນໂອນ)', canvas.width / 2, 245);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.fillText(`${eslip.amount.toLocaleString()} LAK`, canvas.width / 2, 295);
+
+    // Transaction Details Table
+    const startY = 360;
+    const lineSpacing = 42;
+    ctx.textAlign = 'left';
+
+    const drawDetailRow = (y: number, label: string, value: string, isBold: boolean = false, color: string = '#f8fafc') => {
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '16px sans-serif';
+      ctx.fillText(label, 60, y);
+
+      ctx.fillStyle = color;
+      ctx.font = isBold ? 'bold 18px sans-serif' : '17px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(value, canvas.width - 60, y);
+      ctx.textAlign = 'left';
+
+      // subtle separator line
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(60, y + 15);
+      ctx.lineTo(canvas.width - 60, y + 15);
+      ctx.stroke();
+    };
+
+    const formattedDate = new Date(eslip.dateTime).toLocaleString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+
+    drawDetailRow(startY, 'Reference ID (ເລກອ້າງອີງ):', eslip.referenceId, true, '#38bdf8');
+    drawDetailRow(startY + lineSpacing, 'Date & Time (ວັນທີ/ເວລາ):', formattedDate);
+    drawDetailRow(startY + lineSpacing * 2, 'Sender / Debit (ຜູ້ໂອນ):', `${eslip.debit.name} (${eslip.debit.walletId})`, true);
+    drawDetailRow(startY + lineSpacing * 3, 'Receiver / Credit (ຜູ້ຮັບ):', `${eslip.credit.name} (${eslip.credit.walletId})`, true, '#4ade80');
+    drawDetailRow(startY + lineSpacing * 4, 'Transfer Fee (ຄ່າທຳນຽມ):', '0 LAK (Free)', false, '#94a3b8');
+
+    // Bottom Security Notice & QR
+    ctx.fillStyle = '#64748b';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('This e-Slip is an official proof of electronic fund transfer verified by Companion App.', canvas.width / 2, startY + lineSpacing * 5 + 40);
+    ctx.fillText('www.companion-platform.la • Real-time Escrow & Wallet', canvas.width / 2, startY + lineSpacing * 5 + 65);
+
+    // Generate Download link
+    const dataUrl = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `eslip-${eslip.referenceId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setEslipSavedToast(true);
+    setTimeout(() => setEslipSavedToast(false), 3000);
+  };
+
 
   // Submit Withdrawal Request
   const handleWithdrawSubmit = async (e: React.FormEvent) => {
@@ -2548,8 +2813,8 @@ export default function App() {
 
         {/* MODAL 9: REAL-TIME WALLET TRANSFER (SEND / RECEIVE QR) */}
         {transferModal && (
-          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl my-auto">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <div className="p-2 bg-blue-500/10 text-blue-400 rounded-xl">
@@ -2560,7 +2825,16 @@ export default function App() {
                     <p className="text-[10px] text-slate-400">ໂອນເງິນ / ຮັບເງິນ Realtime ດ້ວຍ QR</p>
                   </div>
                 </div>
-                <button type="button" onClick={() => setTransferModal(false)}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopCameraScanner();
+                    setTransferStep('scan');
+                    setRecipientInfo(null);
+                    setInquiryError(null);
+                    setTransferModal(false);
+                  }}
+                >
                   <X className="w-5 h-5 text-slate-400 hover:text-white" />
                 </button>
               </div>
@@ -2569,7 +2843,11 @@ export default function App() {
               <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setTransferTab('send')}
+                  onClick={() => {
+                    setTransferTab('send');
+                    setTransferStep('scan');
+                    setRecipientInfo(null);
+                  }}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     transferTab === 'send'
                       ? 'bg-blue-600 text-white shadow-md'
@@ -2580,7 +2858,10 @@ export default function App() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTransferTab('myqr')}
+                  onClick={() => {
+                    stopCameraScanner();
+                    setTransferTab('myqr');
+                  }}
                   className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     transferTab === 'myqr'
                       ? 'bg-blue-600 text-white shadow-md'
@@ -2592,62 +2873,194 @@ export default function App() {
               </div>
 
               {transferTab === 'send' ? (
-                <form onSubmit={handleTransferSubmit} className="space-y-3">
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
-                    <span className="text-slate-400">Your Balance:</span>
-                    <span className="font-bold text-white">{(currentUser?.walletBalance || 0).toLocaleString()} LAK</span>
-                  </div>
+                <div className="space-y-3">
+                  {/* STEP 1: SCAN QR / ENTER RECIPIENT INQUIRY */}
+                  {transferStep === 'scan' ? (
+                    <div className="space-y-3">
+                      <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Your Balance:</span>
+                        <span className="font-bold text-white">{(currentUser?.walletBalance || 0).toLocaleString()} LAK</span>
+                      </div>
 
-                  <div>
-                    <label className="block text-[11px] text-slate-400 font-semibold mb-1">
-                      Recipient Phone or Wallet ID
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. 02088888888 or paste QR payload"
-                      value={transferTarget}
-                      onChange={(e) => setTransferTarget(e.target.value)}
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
+                      {/* Camera Scanner View */}
+                      {isScanningCamera ? (
+                        <div className="relative rounded-2xl overflow-hidden border-2 border-blue-500 bg-black aspect-square flex flex-col items-center justify-center shadow-inner">
+                          <video ref={scannerVideoRef} className="w-full h-full object-cover" />
+                          <div className="absolute inset-8 border-2 border-dashed border-blue-400/80 rounded-xl pointer-events-none animate-pulse" />
+                          <button
+                            type="button"
+                            onClick={stopCameraScanner}
+                            className="absolute bottom-3 px-4 py-1.5 bg-black/75 hover:bg-black text-white text-[11px] rounded-full font-bold border border-slate-700 shadow-md"
+                          >
+                            Stop Camera
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          {/* Live Camera Scanner Button */}
+                          <button
+                            type="button"
+                            onClick={startCameraScanner}
+                            className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 rounded-xl flex flex-col items-center justify-center gap-1.5 text-center transition-all group"
+                          >
+                            <div className="p-2 bg-blue-500/10 text-blue-400 rounded-lg group-hover:bg-blue-500/20">
+                              <ScanLine className="w-5 h-5" />
+                            </div>
+                            <span className="text-[11px] font-bold text-white">Scan Wallet QR</span>
+                            <span className="text-[9px] text-slate-400">Scan via camera</span>
+                          </button>
 
-                  <div>
-                    <label className="block text-[11px] text-slate-400 font-semibold mb-1">Amount (LAK)</label>
-                    <input
-                      type="number"
-                      min="1000"
-                      step="1000"
-                      value={transferAmount}
-                      onChange={(e) => setTransferAmount(e.target.value)}
-                      required
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
+                          {/* Upload QR Image from phone */}
+                          <button
+                            type="button"
+                            onClick={() => qrFileInputRef.current?.click()}
+                            className="p-3 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 rounded-xl flex flex-col items-center justify-center gap-1.5 text-center transition-all group"
+                          >
+                            <div className="p-2 bg-purple-500/10 text-purple-400 rounded-lg group-hover:bg-purple-500/20">
+                              <Upload className="w-5 h-5" />
+                            </div>
+                            <span className="text-[11px] font-bold text-white">Upload QR Photo</span>
+                            <span className="text-[9px] text-slate-400">Select from gallery</span>
+                          </button>
+                          <input
+                            type="file"
+                            ref={qrFileInputRef}
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleQrImageUpload}
+                          />
+                        </div>
+                      )}
 
-                  {/* Quick Preset Buttons */}
-                  <div className="flex gap-1.5">
-                    {['50000', '100000', '200000', '500000'].map((amt) => (
+                      <div className="relative flex items-center justify-center">
+                        <div className="border-t border-slate-800 w-full" />
+                        <span className="bg-slate-900 px-2 text-[10px] text-slate-500 uppercase tracking-wider">
+                          or enter phone number
+                        </span>
+                      </div>
+
+                      {/* Manual Input & Inquiry */}
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Recipient Phone or Wallet ID (e.g. 02088888888)"
+                          value={transferTarget}
+                          onChange={(e) => {
+                            setTransferTarget(e.target.value);
+                            setInquiryError(null);
+                          }}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+
+                        {inquiryError && (
+                          <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[11px] text-rose-300 flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            <span>{inquiryError}</span>
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={inquiryLoading || !transferTarget.trim()}
+                          onClick={() => handleSendInquiry(transferTarget)}
+                          className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/20 transition-all"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>{inquiryLoading ? 'Verifying Recipient...' : 'Verify Recipient (ກວດສອບ)'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* STEP 2: RECIPIENT VERIFIED & ENTER AMOUNT */
+                    <form onSubmit={handleTransferSubmit} className="space-y-3">
+                      {/* Recipient Card */}
+                      <div className="p-3 bg-slate-950 border border-emerald-500/30 rounded-xl flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={recipientInfo?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150'}
+                            alt="Recipient"
+                            className="w-10 h-10 rounded-full object-cover border border-emerald-500/40"
+                          />
+                          <div>
+                            <div className="flex items-center gap-1">
+                              <span className="font-bold text-white text-xs">{recipientInfo?.name}</span>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">{recipientInfo?.phone}</div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTransferStep('scan');
+                            setRecipientInfo(null);
+                          }}
+                          className="text-[10px] font-bold text-blue-400 hover:underline px-2 py-1 bg-slate-800 rounded-lg"
+                        >
+                          Change
+                        </button>
+                      </div>
+
+                      <div className="p-2 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between text-xs">
+                        <span className="text-slate-400">Available:</span>
+                        <span className="font-bold text-white">{(currentUser?.walletBalance || 0).toLocaleString()} LAK</span>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] text-slate-400 font-semibold mb-1">
+                          Transfer Amount (LAK) *
+                        </label>
+                        <input
+                          type="number"
+                          min="1000"
+                          step="1000"
+                          value={transferAmount}
+                          onChange={(e) => setTransferAmount(e.target.value)}
+                          required
+                          autoFocus
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+
+                      {/* Quick Preset Buttons */}
+                      <div className="flex gap-1.5">
+                        {['50000', '100000', '200000', '500000', '1000000'].map((amt) => (
+                          <button
+                            key={amt}
+                            type="button"
+                            onClick={() => setTransferAmount(amt)}
+                            className="flex-1 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-[10px] font-bold text-slate-300"
+                          >
+                            {(Number(amt) / 1000).toLocaleString()}k
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Transfer Memo */}
+                      <div>
+                        <label className="block text-[11px] text-slate-400 font-semibold mb-1">
+                          Transfer Note (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Dinner, Gift, Booking bonus"
+                          value={transferNote}
+                          onChange={(e) => setTransferNote(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+
                       <button
-                        key={amt}
-                        type="button"
-                        onClick={() => setTransferAmount(amt)}
-                        className="flex-1 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded-lg text-[10px] font-bold text-slate-300"
+                        type="submit"
+                        disabled={transferLoading || Number(transferAmount) <= 0}
+                        className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
                       >
-                        {(Number(amt) / 1000).toLocaleString()}k
+                        <Send className="w-4 h-4" />
+                        <span>{transferLoading ? 'Processing Transfer...' : `Confirm Transfer (${Number(transferAmount || 0).toLocaleString()} LAK)`}</span>
                       </button>
-                    ))}
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={transferLoading || !transferTarget.trim() || Number(transferAmount) <= 0}
-                    className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>{transferLoading ? 'Transferring...' : 'Transfer Now (Real-time)'}</span>
-                  </button>
-                </form>
+                    </form>
+                  )}
+                </div>
               ) : (
                 /* My Wallet QR Code */
                 <div className="space-y-3 flex flex-col items-center text-center">
@@ -2783,8 +3196,137 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* MODAL 11: REAL-TIME WALLET TRANSFER E-SLIP */}
+        {eslipModal && (
+          <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-sm p-5 space-y-4 shadow-2xl relative my-auto">
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setEslipModal(null)}
+                className="absolute top-4 right-4 p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-full transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {/* Success Badge & Header */}
+              <div className="text-center pt-2">
+                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-2 border border-emerald-500/30">
+                  <CheckCircle2 className="w-7 h-7" />
+                </div>
+                <h3 className="text-sm font-bold text-white tracking-wide">COMPANION PLATFORM</h3>
+                <p className="text-[11px] text-emerald-400 font-semibold">ໂອນເງິນສຳເລັດ / Transfer Successful</p>
+              </div>
+
+              {/* Big Amount Box */}
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-2xl text-center shadow-inner">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-0.5">
+                  Transfer Amount (ຈຳນວນເງິນໂອນ)
+                </span>
+                <div className="text-2xl font-black text-white tracking-tight">
+                  {eslipModal.amount.toLocaleString()} <span className="text-xs font-normal text-slate-400">LAK</span>
+                </div>
+              </div>
+
+              {/* Transaction Details Card */}
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-2xl space-y-2.5 text-xs">
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="text-slate-400">Ref ID (ເລກອ້າງອີງ):</span>
+                  <span className="font-mono font-bold text-sky-400 select-all">{eslipModal.referenceId}</span>
+                </div>
+                <div className="flex justify-between items-center text-[11px]">
+                  <span className="text-slate-400">Date & Time:</span>
+                  <span className="text-slate-300 font-medium">
+                    {new Date(eslipModal.dateTime).toLocaleString('en-GB', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                </div>
+
+                <div className="border-t border-slate-800/80 pt-2.5 space-y-2.5">
+                  {/* Sender / Debit */}
+                  <div className="flex justify-between items-start text-[11px]">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">ຜູ້ໂອນ (Debit Account):</span>
+                      <span className="font-bold text-white text-xs">{eslipModal.debit.name}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-slate-500 block text-[9px]">Wallet ID / Phone</span>
+                      <span className="font-mono text-slate-300 text-[11px]">{eslipModal.debit.walletId}</span>
+                    </div>
+                  </div>
+
+                  {/* Receiver / Credit */}
+                  <div className="flex justify-between items-start text-[11px]">
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">ຜູ້ຮັບ (Credit Account):</span>
+                      <span className="font-bold text-emerald-400 text-xs">{eslipModal.credit.name}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-slate-500 block text-[9px]">Wallet ID / Phone</span>
+                      <span className="font-mono text-emerald-400 text-[11px] font-bold">{eslipModal.credit.walletId}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-800/80 pt-2 flex justify-between items-center text-[11px]">
+                  <span className="text-slate-400">Transfer Fee (ຄ່າທຳນຽມ):</span>
+                  <span className="text-emerald-400 font-semibold">0 LAK (Free)</span>
+                </div>
+              </div>
+
+              {/* QR Verification Seal */}
+              <div className="flex items-center justify-between p-2.5 bg-slate-950/60 border border-slate-800/80 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                  <span className="text-[10px] text-slate-400">Official companion e-Slip verified</span>
+                </div>
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=SLIP:${eslipModal.referenceId}`}
+                  alt="Slip QR"
+                  className="w-8 h-8 rounded bg-white p-0.5"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleSaveEslip(eslipModal)}
+                  className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-[0.99]"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Save e-Slip to Phone (ບັນທຶກໃບຮັບເງິນ)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEslipModal(null)}
+                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  Done (ສຳເລັດ)
+                </button>
+              </div>
+
+              {/* Toast message when saved */}
+              {eslipSavedToast && (
+                <div className="p-2 bg-emerald-600 text-white rounded-xl text-center text-xs font-bold shadow-lg animate-in fade-in flex items-center justify-center gap-1.5">
+                  <Check className="w-4 h-4" />
+                  <span>e-Slip saved to your device gallery!</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
 

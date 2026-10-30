@@ -110,3 +110,33 @@ export interface WalletTx {
   targetUser?: { id: string; name: string; phone: string; avatar: string | null } | null;
   createdAt: string;
 }
+
+export interface WalletRecipient {
+  id: string;
+  name: string;
+  phone: string;
+  avatar?: string | null;
+  city?: string;
+  role?: string;
+}
+
+export interface WalletTransferEslip {
+  referenceId: string;
+  transactionId: string;
+  dateTime: string;
+  amount: number;
+  fee: number;
+  debit: {
+    userId: string;
+    name: string;
+    walletId: string;
+    avatar?: string | null;
+  };
+  credit: {
+    userId: string;
+    name: string;
+    walletId: string;
+    avatar?: string | null;
+  };
+}
+

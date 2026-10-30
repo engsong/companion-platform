@@ -175,7 +175,66 @@ router.post('/withdraw', authenticateToken, async (req: AuthRequest, res: Respon
   }
 });
 
-// 5. Real-time Wallet to Wallet Transfer (by QR code or Phone Number)
+// 5. Send Inquiry for Recipient Wallet (QR Payload or Phone)
+router.post('/inquiry', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const senderId = req.user!.id;
+    const { targetIdentifier } = req.body;
+
+    if (!targetIdentifier || typeof targetIdentifier !== 'string') {
+      return res.status(400).json({ error: 'Recipient QR code or phone number is required' });
+    }
+
+    let cleanTarget = targetIdentifier.trim();
+    if (cleanTarget.startsWith('WALLET:')) {
+      const parts = cleanTarget.split(':');
+      // Format: WALLET:userId:phone
+      cleanTarget = parts[1] || parts[2] || cleanTarget;
+    }
+
+    const targetUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: cleanTarget },
+          { phone: cleanTarget },
+          { phone: cleanTarget.replace(/\D/g, '') }
+        ]
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        avatar: true,
+        city: true,
+        role: true
+      }
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Recipient wallet account not found. Please verify QR or phone.' });
+    }
+
+    if (targetUser.id === senderId) {
+      return res.status(400).json({ error: 'Cannot transfer money to your own wallet account' });
+    }
+
+    res.json({
+      success: true,
+      recipient: {
+        id: targetUser.id,
+        name: targetUser.name,
+        phone: targetUser.phone,
+        avatar: targetUser.avatar,
+        city: targetUser.city,
+        role: targetUser.role
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to query recipient wallet' });
+  }
+});
+
+// 6. Real-time Wallet to Wallet Transfer with E-Slip generation
 router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const senderId = req.user!.id;
@@ -216,6 +275,8 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
       return res.status(400).json({ error: 'Cannot transfer money to your own wallet' });
     }
 
+    const referenceId = 'TX' + Date.now().toString().slice(-8) + Math.floor(1000 + Math.random() * 9000);
+
     // Perform atomic transfer
     const result = await prisma.$transaction(async (tx) => {
       const sender = await tx.user.findUnique({ where: { id: senderId } });
@@ -245,7 +306,8 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
           amount: numAmount,
           status: 'COMPLETED',
           targetUserId: targetUser.id,
-          accountName: targetUser.name
+          accountName: targetUser.name,
+          adminNote: `REF:${referenceId}`
         }
       });
 
@@ -257,12 +319,33 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
           amount: numAmount,
           status: 'COMPLETED',
           targetUserId: senderId,
-          accountName: sender.name
+          accountName: sender.name,
+          adminNote: `REF:${referenceId}`
         }
       });
 
-      return { updatedSender, updatedReceiver, outTx, inTx, senderName: sender.name };
+      return { updatedSender, updatedReceiver, outTx, inTx, sender };
     });
+
+    const eslip = {
+      referenceId,
+      transactionId: result.outTx.id,
+      dateTime: result.outTx.createdAt,
+      amount: numAmount,
+      fee: 0,
+      debit: {
+        userId: senderId,
+        name: result.sender.name,
+        walletId: result.sender.phone || senderId,
+        avatar: result.sender.avatar
+      },
+      credit: {
+        userId: targetUser.id,
+        name: targetUser.name,
+        walletId: targetUser.phone || targetUser.id,
+        avatar: targetUser.avatar
+      }
+    };
 
     // Realtime Socket.io Notification to both parties
     const io = req.app.get('io');
@@ -272,7 +355,8 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
         balance: result.updatedSender.walletBalance,
         type: 'TRANSFER_OUT',
         amount: numAmount,
-        targetName: targetUser.name
+        targetName: targetUser.name,
+        referenceId
       });
 
       // Notify receiver immediately
@@ -280,7 +364,8 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
         balance: result.updatedReceiver.walletBalance,
         type: 'TRANSFER_IN',
         amount: numAmount,
-        fromName: result.senderName
+        fromName: result.sender.name,
+        referenceId
       });
     }
 
@@ -288,11 +373,7 @@ router.post('/transfer', authenticateToken, async (req: AuthRequest, res: Respon
       success: true,
       message: `Successfully transferred ${numAmount.toLocaleString()} LAK to ${targetUser.name}`,
       balance: result.updatedSender.walletBalance,
-      recipient: {
-        id: targetUser.id,
-        name: targetUser.name,
-        phone: targetUser.phone
-      }
+      eslip
     });
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Failed to complete wallet transfer' });
