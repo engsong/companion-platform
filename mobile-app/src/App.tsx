@@ -2697,48 +2697,86 @@ export default function App() {
           {/* TAB 5: PROFILE & WALLET */}
           {activeTab === 'profile' && currentUser && (
             <div className="p-4 space-y-5">
-              <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-2xl relative overflow-hidden">
-                <div className="flex items-center gap-4">
-                  <div className="relative group shrink-0">
-                    <img
-                      src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200'}
-                      alt={currentUser.name}
-                      onClick={() => setPhotoViewerUrl(currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400')}
-                      className="w-16 h-16 rounded-full object-cover border-2 border-rose-500 shadow-lg cursor-pointer hover:opacity-90 transition-opacity"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => profileAvatarInputRef.current?.click()}
-                      disabled={uploadingAvatar}
-                      className="absolute -bottom-1 -right-1 p-1.5 bg-rose-500 hover:bg-rose-600 rounded-full text-white shadow border border-slate-900 cursor-pointer"
-                      title="Change Profile Picture"
-                    >
-                      <Camera className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start gap-1">
-                      <div>
-                        <h3 className="text-base font-bold text-white flex items-center gap-1.5">
-                          {currentUser.name}
-                          {currentUser.isVerified && <ShieldCheck className="w-4 h-4 text-emerald-400" />}
-                        </h3>
-                        <p className="text-xs text-slate-400">{currentUser.phone}</p>
-                      </div>
+              {/* Facebook-style Cover & Profile Header */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                {/* Cover Image */}
+                <div className="h-32 sm:h-44 w-full relative overflow-hidden bg-slate-950 group">
+                  <img
+                    src={currentUser.coverImage || 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&auto=format&fit=crop&q=80'}
+                    alt="My Cover Photo"
+                    onClick={() => setPhotoViewerUrl(currentUser.coverImage || 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1200&auto=format&fit=crop&q=80')}
+                    className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform duration-300"
+                    title="Click to view cover photo (ກົດເບິ່ງຮູບໜ້າປົກ)"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-black/20 pointer-events-none" />
+                  
+                  {/* Change Cover Button */}
+                  <button
+                    type="button"
+                    onClick={() => profileCoverInputRef.current?.click()}
+                    disabled={uploadingCover}
+                    className="absolute bottom-2 right-2 px-2.5 py-1.5 rounded-xl bg-black/75 hover:bg-black/90 text-white backdrop-blur text-xs font-semibold flex items-center gap-1.5 border border-white/20 shadow-lg cursor-pointer transition-colors"
+                    title="Change Cover Photo (ປ່ຽນຮູບໜ້າປົກ)"
+                  >
+                    <Camera className="w-3.5 h-3.5 text-rose-400" />
+                    <span>{uploadingCover ? 'Uploading...' : 'Edit Cover (ປ່ຽນຮູບປົກ)'}</span>
+                  </button>
+                </div>
+
+                {/* Avatar and Details */}
+                <div className="px-4 pb-4 -mt-10 sm:-mt-12 relative">
+                  <div className="flex justify-between items-end">
+                    <div className="relative group">
+                      <img
+                        src={currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200'}
+                        alt={currentUser.name}
+                        onClick={() => setPhotoViewerUrl(currentUser.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400')}
+                        className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover border-4 border-slate-900 shadow-xl cursor-pointer hover:opacity-90 transition-opacity"
+                        title="Click to view profile picture (ກົດເບິ່ງຮູບໂປຣໄຟລ໌)"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => profileAvatarInputRef.current?.click()}
+                        disabled={uploadingAvatar}
+                        className="absolute bottom-0 right-0 p-1.5 bg-rose-500 hover:bg-rose-600 rounded-full text-white shadow-lg border-2 border-slate-900 cursor-pointer"
+                        title="Change Profile Picture (ປ່ຽນຮູບໂປຣໄຟລ໌)"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => handleOpenUserProfile(currentUser.id)}
-                        className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-[10px] font-bold border border-slate-700 flex items-center gap-1 shrink-0"
+                        className="px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-rose-500/25 transition-all"
                       >
-                        <UserIcon className="w-3 h-3 text-rose-400" />
-                        <span>Facebook Profile</span>
+                        <UserIcon className="w-3.5 h-3.5" />
+                        <span>Timeline (ເບິ່ງໂປຣໄຟລ໌ Facebook)</span>
                       </button>
                     </div>
-                    <span className="inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold">
-                      Role: {currentUser.role}
-                    </span>
+                  </div>
+
+                  <div className="mt-2.5">
+                    <h3 className="text-lg font-extrabold text-white flex items-center gap-1.5">
+                      {currentUser.name}
+                      {currentUser.isVerified && <ShieldCheck className="w-4 h-4 text-emerald-400" />}
+                    </h3>
+                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                      <span className="text-xs text-slate-400">{currentUser.phone}</span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-semibold">
+                        Role: {currentUser.role}
+                      </span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-xs text-slate-400 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-slate-500" />
+                        {currentUser.city || 'Vientiane'}
+                      </span>
+                    </div>
                   </div>
                 </div>
+              </div>
 
                 {/* Wallet Balance Card */}
                 <div className="mt-5 p-4 bg-slate-950 border border-slate-800 rounded-xl">
@@ -2816,7 +2854,6 @@ export default function App() {
                     <span className="text-[11px] font-bold">Withdraw</span>
                   </button>
                 </div>
-              </div>
 
               {/* Wallet Transaction History List */}
               <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
@@ -2990,50 +3027,6 @@ export default function App() {
           onChange={handleCoverChange}
         />
 
-        {/* FULL SCREEN PHOTO VIEWER / LIGHTBOX */}
-        {photoViewerUrl && (
-          <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in">
-            {/* Top Bar */}
-            <div className="absolute top-4 right-4 flex items-center gap-2.5 z-20">
-              {currentUser?.avatar === photoViewerUrl && (
-                <button
-                  type="button"
-                  onClick={() => profileAvatarInputRef.current?.click()}
-                  disabled={uploadingAvatar}
-                  className="px-3.5 py-1.5 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/30"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>{uploadingAvatar ? 'Uploading...' : 'Change Photo'}</span>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setPhotoViewerUrl(null)}
-                className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
-                title="Close"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Photo */}
-            <div
-              onClick={() => setPhotoViewerUrl(null)}
-              className="w-full h-full flex items-center justify-center cursor-zoom-out p-2"
-            >
-              <img
-                src={photoViewerUrl}
-                alt="Full preview"
-                onClick={(e) => e.stopPropagation()}
-                className="max-h-[82vh] max-w-full object-contain rounded-2xl shadow-2xl cursor-default"
-              />
-            </div>
-
-            <div className="text-center pb-2">
-              <span className="text-[11px] text-slate-400">Tap outside or press (X) to exit</span>
-            </div>
-          </div>
-        )}
 
         {/* FACEBOOK-STYLE USER PROFILE MODAL */}
         {selectedUserProfile && (
@@ -4406,6 +4399,69 @@ export default function App() {
                   <span>e-Slip saved to your device gallery!</span>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* FULL SCREEN PHOTO VIEWER / LIGHTBOX (RENDERED AT ROOT WITH HIGHEST Z-INDEX ON TOP OF ALL MODALS) */}
+        {photoViewerUrl && (
+          <div className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-md flex flex-col items-center justify-between p-3 sm:p-6 animate-in fade-in">
+            {/* Top Bar */}
+            <div className="w-full max-w-4xl flex items-center justify-between py-2 px-1 z-20">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-white/10 text-white text-xs font-semibold backdrop-blur flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Photo Preview (ເບິ່ງຮູບເຕັມ)</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Change photo button if own photo or profile */}
+                {currentUser && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (photoViewerUrl.includes('cover') || photoViewerUrl === currentUser.coverImage || selectedUserProfile?.coverImage === photoViewerUrl) {
+                        profileCoverInputRef.current?.click();
+                      } else {
+                        profileAvatarInputRef.current?.click();
+                      }
+                    }}
+                    disabled={uploadingAvatar || uploadingCover}
+                    className="px-3.5 py-1.5 rounded-full bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-500/30 transition-all cursor-pointer"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{uploadingAvatar || uploadingCover ? 'Uploading...' : 'Change Photo (ປ່ຽນຮູບ)'}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPhotoViewerUrl(null)}
+                  className="p-2 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+                  title="Close (ປິດ)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Photo Preview Center */}
+            <div
+              onClick={() => setPhotoViewerUrl(null)}
+              className="w-full flex-1 flex items-center justify-center cursor-zoom-out p-2 overflow-hidden"
+            >
+              <img
+                src={photoViewerUrl}
+                alt="Full preview"
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-[82vh] max-w-full object-contain rounded-2xl shadow-2xl cursor-default transition-transform"
+              />
+            </div>
+
+            {/* Bottom Tip */}
+            <div className="text-center pb-2">
+              <span className="text-[11px] text-slate-400 bg-black/60 px-3 py-1 rounded-full backdrop-blur">
+                Tap anywhere outside or press (X) to close
+              </span>
             </div>
           </div>
         )}
