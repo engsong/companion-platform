@@ -1682,9 +1682,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex justify-center selection:bg-rose-500 selection:text-white">
+    <div className="h-screen h-[100dvh] bg-slate-950 flex justify-center overflow-hidden selection:bg-rose-500 selection:text-white">
       {/* Mobile Device Frame Container (Max width 440px for true mobile app feel) */}
-      <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 flex flex-col min-h-screen shadow-2xl relative overflow-hidden">
+      <div className="w-full max-w-md bg-slate-900 border-x border-slate-800 flex flex-col h-full shadow-2xl relative overflow-hidden">
 
         {/* Sleek App Toast Notification (Replaces Browser alert) */}
         {appToast && (
@@ -1750,8 +1750,8 @@ export default function App() {
           </div>
         )}
 
-        {/* Dynamic App Content Body */}
-        <div className="flex-1 overflow-y-auto pb-20 no-scrollbar">
+        {/* Dynamic App Content Body - Body scrolls up & down while Bottom Tab is locked */}
+        <div className={`flex-1 ${activeTab === 'chat' && activeChatUser ? 'overflow-hidden flex flex-col pb-16' : 'overflow-y-auto pb-24 overscroll-contain'} no-scrollbar`}>
           {/* TAB 1: EXPLORE COMPANIONS */}
           {activeTab === 'explore' && (
             <div>
@@ -1948,7 +1948,7 @@ export default function App() {
           {activeTab === 'chat' && (
             <div className="h-full flex flex-col">
               {!activeChatUser ? (
-                <div className="h-[calc(100vh-140px)] overflow-y-auto no-scrollbar divide-y divide-slate-800/60">
+                <div className="divide-y divide-slate-800/60">
                   {/* Header */}
                   <div className="p-4 bg-slate-900/40 border-b border-slate-800 flex justify-between items-center sticky top-0 backdrop-blur z-10">
                     <div>
@@ -2213,7 +2213,7 @@ export default function App() {
                 </div>
               ) : (
                 /* Active Chat Room View */
-                <div className="flex flex-col h-[calc(100vh-140px)]">
+                <div className="flex flex-col h-full">
                   {/* Chat Top Bar */}
                   <div className="p-3 bg-slate-900 border-b border-slate-800 flex items-center justify-between shrink-0">
                     <div className="flex items-center gap-2.5">
@@ -3048,8 +3048,8 @@ export default function App() {
           )}
         </div>
 
-        {/* Bottom Tab Navigation Bar */}
-        <div className="h-16 bg-slate-950 border-t border-slate-800 px-6 flex items-center justify-between shrink-0 absolute bottom-0 left-0 right-0 z-20">
+        {/* Bottom Tab Navigation Bar - Locked & Sticky at Bottom */}
+        <nav className="h-16 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 px-6 flex items-center justify-between shrink-0 absolute bottom-0 left-0 right-0 z-40 shadow-[0_-4px_25px_rgba(0,0,0,0.6)]">
           <button
             onClick={() => setActiveTab('explore')}
             className={`flex flex-col items-center gap-1 ${activeTab === 'explore' ? 'text-rose-500 font-bold' : 'text-slate-400'}`}
@@ -3089,7 +3089,7 @@ export default function App() {
             <UserIcon className="w-5 h-5" />
             <span className="text-[10px]">Profile</span>
           </button>
-        </div>
+        </nav>
 
         {/* HIDDEN FILE INPUT FOR CHANGING PROFILE AVATAR */}
         <input
