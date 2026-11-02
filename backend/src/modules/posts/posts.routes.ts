@@ -115,10 +115,63 @@ router.post('/:postId/like', authenticateToken, async (req: AuthRequest, res: Re
         where: { id: postId },
         data: { likesCount: { increment: 1 } }
       });
+
+      // Notify post author if liked by someone else
+      const post = await prisma.post.findUnique({
+        where: { id: postId },
+        select: { userId: true }
+      });
+      if (post && post.userId !== userId) {
+        const liker = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true, avatar: true }
+        });
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`user_${post.userId}`).emit('notification_alert', {
+            id: `${postId}_${userId}_like_${Date.now()}`,
+            type: 'POST_LIKE',
+            title: `New Like! (ຖືກໃຈໃໝ່)`,
+            body: `${liker?.name || 'Someone'} liked your post ❤️`,
+            avatar: liker?.avatar,
+            postId,
+            createdAt: new Date()
+          });
+        }
+      }
+
       return res.json({ message: 'Liked', liked: true });
     }
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to toggle like' });
+  }
+});
+
+// Get all comments for a post
+router.get('/:postId/comments', async (req: Request, res: Response) => {
+  try {
+    const { postId } = req.params;
+
+    const comments = await prisma.postComment.findMany({
+      where: { postId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            avatar: true,
+            city: true,
+            role: true,
+            isVerified: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    res.json({ comments });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to fetch comments' });
   }
 });
 
@@ -139,13 +192,63 @@ router.post('/:postId/comments', authenticateToken, async (req: AuthRequest, res
         content: content.trim()
       },
       include: {
-        user: { select: { id: true, name: true, avatar: true } }
+        user: { select: { id: true, name: true, avatar: true, isVerified: true, role: true } }
       }
     });
+
+    // Notify post author if commented by someone else
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true }
+    });
+    if (post && post.userId !== req.user!.id) {
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`user_${post.userId}`).emit('notification_alert', {
+          id: comment.id,
+          type: 'POST_COMMENT',
+          title: `${comment.user.name} commented on your post`,
+          body: content.trim(),
+          avatar: comment.user.avatar,
+          postId,
+          createdAt: new Date()
+        });
+      }
+    }
 
     res.status(201).json({ message: 'Comment added', comment });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to add comment' });
+  }
+});
+
+// Delete comment (by author, post owner, or admin)
+router.delete('/:postId/comments/:commentId', authenticateToken, async (req: AuthRequest, res: Response) => {
+  try {
+    const { postId, commentId } = req.params;
+    const userId = req.user!.id;
+
+    const comment = await prisma.postComment.findUnique({
+      where: { id: commentId },
+      include: { post: { select: { userId: true } } }
+    });
+
+    if (!comment || comment.postId !== postId) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    const isCommentAuthor = comment.userId === userId;
+    const isPostOwner = comment.post.userId === userId;
+    const isAdmin = req.user!.role === 'ADMIN';
+
+    if (!isCommentAuthor && !isPostOwner && !isAdmin) {
+      return res.status(403).json({ error: 'Unauthorized to delete this comment' });
+    }
+
+    await prisma.postComment.delete({ where: { id: commentId } });
+    res.json({ message: 'Comment deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to delete comment' });
   }
 });
 

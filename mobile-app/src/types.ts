@@ -46,6 +46,21 @@ export interface CompanionCard {
   };
 }
 
+export interface PostComment {
+  id: string;
+  postId?: string;
+  userId: string;
+  content: string;
+  createdAt: string;
+  user: {
+    id: string;
+    name: string;
+    avatar: string | null;
+    role?: string;
+    isVerified?: boolean;
+  };
+}
+
 export interface PostItem {
   id: string;
   userId: string;
@@ -62,11 +77,7 @@ export interface PostItem {
     isVerified: boolean;
   };
   likes: { userId: string }[];
-  comments: {
-    id: string;
-    content: string;
-    user: { id: string; name: string; avatar: string | null };
-  }[];
+  comments: PostComment[];
 }
 
 export interface Booking {

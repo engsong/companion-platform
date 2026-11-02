@@ -43,10 +43,16 @@ import {
   UserPlus,
   UserCheck,
   Users,
-  Trash2
+  Trash2,
+  Bell,
+  BellRing,
+  MessageSquare,
+  Smartphone,
+  Share2,
+  VolumeX
 } from 'lucide-react';
 import jsQR from 'jsqr';
-import { User, CompanionCard, PostItem, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip, ChatContact, UserProfileData } from './types';
+import { User, CompanionCard, PostItem, PostComment, Booking, ChatMsg, WalletTx, WalletRecipient, WalletTransferEslip, ChatContact, UserProfileData } from './types';
 
 export default function App() {
   const [token, setToken] = useState<string>(() => localStorage.getItem('mobile_token') || '');
@@ -176,6 +182,241 @@ export default function App() {
   const [idCardFile, setIdCardFile] = useState<File | null>(null);
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
   const [kycSuccess, setKycSuccess] = useState('');
+
+  // PWA Install prompt & Standalone states
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isStandaloneApp, setIsStandaloneApp] = useState(false);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => localStorage.getItem('sound_enabled') !== 'false');
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(() => {
+    return typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default';
+  });
+
+  // Comments Bottom Sheet / Modal states
+  const [activeCommentPost, setActiveCommentPost] = useState<PostItem | null>(null);
+  const [commentsList, setCommentsList] = useState<PostComment[]>([]);
+  const [commentInput, setCommentInput] = useState('');
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
+
+  // High-fidelity synthetic mobile notification bell chime
+  const playNotificationSound = () => {
+    if (!soundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+
+      // Note 1: E5 (659.25Hz)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(659.25, now);
+      gain1.gain.setValueAtTime(0.2, now);
+      gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.35);
+
+      // Note 2: B5 (987.77Hz) chime harmonic
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(987.77, now + 0.08);
+      gain2.gain.setValueAtTime(0.22, now + 0.08);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(now + 0.08);
+      osc2.stop(now + 0.55);
+    } catch (e) {
+      console.warn('Audio chime playback error:', e);
+    }
+  };
+
+  // PWA beforeinstallprompt & standalone detection
+  useEffect(() => {
+    if (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true) {
+      setIsStandaloneApp(true);
+    }
+
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBanner(true);
+    };
+
+    const handleAppInstalled = () => {
+      setIsStandaloneApp(true);
+      setDeferredPrompt(null);
+      setShowInstallBanner(false);
+      showToast('App installed successfully on your home screen! (ຕິດຕັ້ງແອັບຯສຳເລັດແລ້ວ)', 'success');
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleTriggerInstall = async () => {
+    if (!deferredPrompt) {
+      showToast('To install: on iPhone tap Share (⎋) -> "Add to Home Screen". On Android/Chrome tap (⋮) -> "Install App"', 'info', '📱 Install App (ຕິດຕັ້ງແອັບຯ)');
+      return;
+    }
+    try {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setShowInstallBanner(false);
+        setDeferredPrompt(null);
+      }
+    } catch (err) {
+      console.warn('Install error:', err);
+    }
+  };
+
+  const handleRequestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      showToast('Web Notifications are not supported by this browser', 'info');
+      return;
+    }
+    try {
+      const res = await Notification.requestPermission();
+      setNotifPermission(res);
+      if (res === 'granted') {
+        playNotificationSound();
+        showToast('Real-time notifications enabled! (ເປີດການແຈ້ງເຕືອນສຳເລັດແລ້ວ)', 'success');
+        try {
+          new Notification('Companion App (ສາວ)', {
+            body: 'Real-time alerts & messages are active! (ການແຈ້ງເຕືອນພ້ອມໃຊ້ງານແລ້ວ)',
+            icon: '/icon-192.png',
+          });
+        } catch (e) {}
+      } else {
+        showToast('Notification permission was not granted (ການແຈ້ງເຕືອນຖືກປະຕິເສດ)', 'info');
+      }
+    } catch (err) {
+      console.error('Notification permission error:', err);
+    }
+  };
+
+  const handleToggleSound = () => {
+    const nextVal = !soundEnabled;
+    setSoundEnabled(nextVal);
+    localStorage.setItem('sound_enabled', String(nextVal));
+    if (nextVal) {
+      playNotificationSound();
+      showToast('Sound enabled 🔔 (ເປີດສຽງແລ້ວ)', 'success');
+    } else {
+      showToast('Sound muted 🔕 (ປິດສຽງແລ້ວ)', 'info');
+    }
+  };
+
+  const handleOpenComments = async (post: PostItem) => {
+    setActiveCommentPost(post);
+    setLoadingComments(true);
+    setCommentsList([]);
+    try {
+      const data = await authFetch(`/api/posts/${post.id}/comments`);
+      if (data.comments) {
+        setCommentsList(data.comments);
+      }
+    } catch (err) {
+      console.error('Failed to load comments:', err);
+      showToast('Failed to load comments (ໂຫຼດຄຳເຫັນບໍ່ສຳເລັດ)', 'error');
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  const handleAddComment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!activeCommentPost || !commentInput.trim() || submittingComment) return;
+
+    const content = commentInput.trim();
+    setSubmittingComment(true);
+    try {
+      const data = await authFetch(`/api/posts/${activeCommentPost.id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+      });
+      if (data.comment) {
+        setCommentsList((prev) => [...prev, data.comment]);
+        setCommentInput('');
+
+        // Update comment count on feed posts
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === activeCommentPost.id
+              ? { ...p, comments: [...(p.comments || []), data.comment] }
+              : p
+          )
+        );
+
+        // Update comment count on user profile timeline posts
+        setSelectedUserProfile((prev) => {
+          if (!prev || !prev.posts) return prev;
+          return {
+            ...prev,
+            posts: prev.posts.map((p) =>
+              p.id === activeCommentPost.id
+                ? { ...p, comments: [...(p.comments || []), data.comment] }
+                : p
+            ),
+          };
+        });
+
+        playNotificationSound();
+        showToast('Comment posted! (ເພີ່ມຄຳເຫັນສຳເລັດແລ້ວ)', 'success');
+      }
+    } catch (err: any) {
+      console.error('Error posting comment:', err);
+      showToast(err.message || 'Failed to post comment', 'error');
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!activeCommentPost) return;
+    try {
+      await authFetch(`/api/posts/${activeCommentPost.id}/comments/${commentId}`, {
+        method: 'DELETE',
+      });
+      setCommentsList((prev) => prev.filter((c) => c.id !== commentId));
+
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === activeCommentPost.id
+            ? { ...p, comments: (p.comments || []).filter((c) => c.id !== commentId) }
+            : p
+        )
+      );
+
+      setSelectedUserProfile((prev) => {
+        if (!prev || !prev.posts) return prev;
+        return {
+          ...prev,
+          posts: prev.posts.map((p) =>
+            p.id === activeCommentPost.id
+              ? { ...p, comments: (p.comments || []).filter((c) => c.id !== commentId) }
+              : p
+          ),
+        };
+      });
+
+      showToast('Comment deleted (ລຶບຄຳເຫັນແລ້ວ)', 'info');
+    } catch (err: any) {
+      console.error('Failed to delete comment:', err);
+      showToast(err.message || 'Failed to delete comment', 'error');
+    }
+  };
 
   // Auth Screen states (Login & Register)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -386,7 +627,34 @@ export default function App() {
 
     socket.emit('join_user', currentUser.id);
 
+    socket.on('notification_alert', (notif: { title: string; body: string; data?: any }) => {
+      playNotificationSound();
+      showToast(notif.body, 'info', notif.title);
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(notif.title, {
+            body: notif.body,
+            icon: '/icon-192.png',
+          });
+        } catch (e) {}
+      }
+    });
+
     socket.on('new_message', (msg: ChatMsg) => {
+      if (currentUser && msg.senderId !== currentUser.id) {
+        playNotificationSound();
+        if (!activeChatUser || activeChatUser.id !== msg.senderId) {
+          showToast(msg.content.slice(0, 70), 'info', 'New Message 💬');
+          if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification('New Chat Message', {
+                body: msg.content.slice(0, 100),
+                icon: '/icon-192.png',
+              });
+            } catch (e) {}
+          }
+        }
+      }
       setChatMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
       loadMyBookings();
       setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -402,6 +670,7 @@ export default function App() {
     });
 
     socket.on('wallet_updated', (data: any) => {
+      playNotificationSound();
       loadWalletInfo();
       if (data?.type === 'TRANSFER_IN') {
         setSecurityWarning(`🎉 You received a real-time transfer of ${data.amount?.toLocaleString()} LAK from ${data.fromName || 'another user'}!`);
@@ -1750,6 +2019,37 @@ export default function App() {
           </div>
         )}
 
+        {/* PWA Install Floating Banner */}
+        {showInstallBanner && !isStandaloneApp && (
+          <div className="mx-4 mt-2 mb-1 p-2.5 rounded-2xl bg-gradient-to-r from-rose-950/90 via-slate-900/95 to-slate-950/90 border border-rose-500/30 flex items-center justify-between text-xs shadow-lg backdrop-blur shrink-0 animate-in slide-in-from-top-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shadow flex items-center justify-center shrink-0">
+                <Smartphone className="w-4 h-4 text-white" />
+              </div>
+              <div className="truncate">
+                <p className="font-bold text-white text-[11px] truncate">Install Companion App (ຕິດຕັ້ງແອັບຯ)</p>
+                <p className="text-[10px] text-slate-300 truncate">Tap to install on Home Screen</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 ml-2">
+              <button
+                type="button"
+                onClick={handleTriggerInstall}
+                className="px-2.5 py-1 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white rounded-lg font-bold text-[10px] shadow cursor-pointer"
+              >
+                Install
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowInstallBanner(false)}
+                className="p-1 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Dynamic App Content Body - Body scrolls up & down while Bottom Tab is locked */}
         <div className={`flex-1 ${activeTab === 'chat' && activeChatUser ? 'overflow-hidden flex flex-col pb-16' : 'overflow-y-auto pb-24 overscroll-contain'} no-scrollbar`}>
           {/* TAB 1: EXPLORE COMPANIONS */}
@@ -1934,9 +2234,16 @@ export default function App() {
                         <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
                         <span>{post.likesCount}</span>
                       </button>
-                      <span className="text-[11px] text-slate-500">
-                        {post.comments.length} comments
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenComments(post)}
+                        className="flex items-center gap-1.5 hover:text-rose-400 transition-colors cursor-pointer group"
+                      >
+                        <MessageSquare className="w-4 h-4 text-slate-400 group-hover:text-rose-400" />
+                        <span className="text-[11px] text-slate-400 group-hover:text-rose-400">
+                          {post.comments?.length || 0} comments
+                        </span>
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -3026,6 +3333,100 @@ export default function App() {
                 </div>
               )}
 
+              {/* PWA Mobile App Install Section */}
+              <div className="p-4 bg-gradient-to-r from-slate-900 via-rose-950/20 to-slate-900 border border-rose-500/30 rounded-2xl space-y-3 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
+                      <Smartphone className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Mobile App Experience (PWA)</h4>
+                      <p className="text-[10px] text-slate-400">Install to home screen for full app experience</p>
+                    </div>
+                  </div>
+                  <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${isStandaloneApp ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300'}`}>
+                    {isStandaloneApp ? 'INSTALLED' : 'READY'}
+                  </span>
+                </div>
+
+                {!isStandaloneApp ? (
+                  <button
+                    type="button"
+                    onClick={handleTriggerInstall}
+                    className="w-full py-2.5 bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-rose-500/25 transition-all cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Install App on Home Screen (ຕິດຕັ້ງແອັບຯເທິງມືຖື)</span>
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2 text-[11px] text-emerald-400 bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/20">
+                    <CheckCircle className="w-4 h-4 shrink-0" />
+                    <span>Running in standalone app mode!</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Notification & Audio Settings */}
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl space-y-3 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0">
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Alerts & Sound (ການແຈ້ງເຕືອນ)</h4>
+                      <p className="text-[10px] text-slate-400">Push notifications & message chime</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleSound}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                    title={soundEnabled ? 'Mute Sound' : 'Enable Sound'}
+                  >
+                    {soundEnabled ? <Volume2 className="w-4 h-4 text-emerald-400" /> : <VolumeX className="w-4 h-4 text-slate-500" />}
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between pt-1 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-300 text-[11px]">Push Status:</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                      notifPermission === 'granted'
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : notifPermission === 'denied'
+                        ? 'bg-rose-500/20 text-rose-300'
+                        : 'bg-amber-500/20 text-amber-300'
+                    }`}>
+                      {notifPermission.toUpperCase()}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playNotificationSound();
+                        showToast('🔔 Chime sound test: crystal clear!', 'info', 'Sound Test');
+                      }}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[10px] font-semibold border border-slate-700 cursor-pointer"
+                    >
+                      Test Chime
+                    </button>
+                    {notifPermission !== 'granted' && (
+                      <button
+                        type="button"
+                        onClick={handleRequestNotificationPermission}
+                        className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-[10px] font-bold shadow cursor-pointer"
+                      >
+                        Enable
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {/* Safety & App Guidelines */}
               <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl text-xs text-slate-400 space-y-2">
                 <p className="font-semibold text-slate-300">Safety Rules:</p>
@@ -3485,9 +3886,16 @@ export default function App() {
                               <Heart className="w-4 h-4 fill-rose-500 text-rose-500" />
                               <span>{p.likesCount}</span>
                             </button>
-                            <span className="text-[10px] text-slate-500">
-                              {p.comments?.length || 0} comments
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenComments(p)}
+                              className="flex items-center gap-1.5 hover:text-rose-400 transition-colors cursor-pointer group"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 text-slate-400 group-hover:text-rose-400" />
+                              <span className="text-[10px] text-slate-400 group-hover:text-rose-400">
+                                {p.comments?.length || 0} comments
+                              </span>
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -4658,6 +5066,149 @@ export default function App() {
               <span className="text-[11px] text-slate-400 bg-black/60 px-3 py-1 rounded-full backdrop-blur">
                 Tap anywhere outside or press (X) to close
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* POST COMMENTS BOTTOM SHEET MODAL */}
+        {activeCommentPost && (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col justify-end sm:items-center sm:justify-center animate-in fade-in duration-200"
+            onClick={() => setActiveCommentPost(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:max-w-md bg-slate-900 border-t sm:border border-slate-800 rounded-t-3xl sm:rounded-3xl max-h-[82vh] h-[82vh] flex flex-col shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 relative"
+            >
+              {/* Mobile Drag Indicator */}
+              <div className="w-10 h-1 bg-slate-700 rounded-full mx-auto mt-2.5 sm:hidden shrink-0" />
+
+              {/* Header */}
+              <div className="p-3.5 px-4 border-b border-slate-800 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span>Comments (ຄຳເຫັນ)</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 font-semibold">
+                        {commentsList.length}
+                      </span>
+                    </h3>
+                    <p className="text-[10px] text-slate-400 truncate max-w-[200px]">
+                      Post by {activeCommentPost.user.name}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveCommentPost(null)}
+                  className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Comments List */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3.5 no-scrollbar">
+                {loadingComments ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-slate-500 gap-2">
+                    <RefreshCw className="w-5 h-5 animate-spin text-rose-500" />
+                    <span className="text-xs">Loading comments...</span>
+                  </div>
+                ) : commentsList.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-slate-500 text-center space-y-2">
+                    <div className="w-12 h-12 rounded-full bg-slate-800/80 flex items-center justify-center text-slate-400">
+                      <MessageSquare className="w-6 h-6" />
+                    </div>
+                    <p className="text-xs font-semibold text-slate-300">No comments yet</p>
+                    <p className="text-[11px] text-slate-500 max-w-[240px]">
+                      Be the first to share your thoughts! (ຍັງບໍ່ມີຄຳເຫັນ ເປັນຄົນທຳອິດທີ່ສະແດງຄວາມຄິດເຫັນ)
+                    </p>
+                  </div>
+                ) : (
+                  commentsList.map((c) => {
+                    const canDelete =
+                      currentUser &&
+                      (currentUser.id === c.userId ||
+                        currentUser.id === activeCommentPost.userId ||
+                        currentUser.role === 'ADMIN');
+
+                    return (
+                      <div key={c.id} className="flex items-start gap-2.5 group">
+                        <img
+                          src={c.user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                          alt={c.user.name}
+                          onClick={() => {
+                            setActiveCommentPost(null);
+                            handleOpenUserProfile(c.user.id);
+                          }}
+                          className="w-8 h-8 rounded-full object-cover border border-slate-700 shrink-0 cursor-pointer hover:ring-2 hover:ring-rose-500 transition-all"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="bg-slate-800/70 rounded-2xl px-3 py-2 text-xs border border-slate-700/50">
+                            <div className="flex items-center justify-between gap-1 mb-0.5">
+                              <span
+                                onClick={() => {
+                                  setActiveCommentPost(null);
+                                  handleOpenUserProfile(c.user.id);
+                                }}
+                                className="font-bold text-white hover:text-rose-400 cursor-pointer transition-colors truncate"
+                              >
+                                {c.user.name}
+                              </span>
+                              <span className="text-[9px] text-slate-500 shrink-0">
+                                {new Date(c.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-slate-200 text-xs leading-relaxed whitespace-pre-wrap break-words">
+                              {c.content}
+                            </p>
+                          </div>
+                        </div>
+
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteComment(c.id)}
+                            className="p-1 text-slate-500 hover:text-rose-400 opacity-60 hover:opacity-100 transition-opacity self-center cursor-pointer"
+                            title="Delete comment"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Bottom Comment Input */}
+              <form
+                onSubmit={handleAddComment}
+                className="p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-2 shrink-0"
+              >
+                <img
+                  src={currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                  alt={currentUser?.name || 'Me'}
+                  className="w-7 h-7 rounded-full object-cover border border-slate-700 shrink-0"
+                />
+                <input
+                  type="text"
+                  value={commentInput}
+                  onChange={(e) => setCommentInput(e.target.value)}
+                  placeholder="Write a comment... (ຂຽນຄຳເຫັນ...)"
+                  className="flex-1 bg-slate-900 border border-slate-700 focus:border-rose-500 rounded-full px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none transition-colors"
+                />
+                <button
+                  type="submit"
+                  disabled={!commentInput.trim() || submittingComment}
+                  className="p-2 rounded-full bg-rose-500 hover:bg-rose-600 disabled:opacity-40 disabled:hover:bg-rose-500 text-white transition-all shadow-md shrink-0 cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </form>
             </div>
           </div>
         )}
