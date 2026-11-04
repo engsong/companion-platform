@@ -657,6 +657,12 @@ export default function App() {
       }
       setChatMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
       loadMyBookings();
+      if (token) {
+        authFetch('/api/chat/conversations').then((data) => {
+          if (data?.conversations) setConversations(data.conversations);
+        });
+        loadChatContacts();
+      }
       setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     });
 
@@ -2290,13 +2296,13 @@ export default function App() {
                           <div
                             key={user.id}
                             onClick={() => handleStartChatWithUser(user)}
-                            className="flex flex-col items-center gap-1 shrink-0 cursor-pointer group"
+                            className="flex flex-col items-center gap-1 shrink-0 cursor-pointer group w-14"
                           >
-                            <div className="relative">
+                            <div className="relative w-14 h-14 shrink-0">
                               <img
                                 src={user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200'}
                                 alt={user.name}
-                                className="w-13 h-13 rounded-full object-cover border-2 border-emerald-500 p-0.5 group-hover:scale-105 transition-all shadow-md shadow-emerald-500/20"
+                                className="w-14 h-14 rounded-full object-cover border-2 border-emerald-500 p-0.5 group-hover:scale-105 transition-all shadow-md shadow-emerald-500/20"
                               />
                               <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-slate-900 shadow" />
                             </div>
